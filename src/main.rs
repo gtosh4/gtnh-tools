@@ -1,14 +1,14 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use gtnh::{GtRecipe, Recipe, RecipeIoType, Repository};
+use gtnh::{GtRecipe, Recipe, RecipeIoType, Repository, build_db};
 
 // ===== CLI definition =====
 
 #[derive(Parser)]
 #[command(name = "gtnh", about = "Query GTNH items and recipes")]
 struct Cli {
-    /// Path to data.bin
-    #[arg(long, default_value = "data.bin", global = true)]
+    /// Path to gtnh.db (created with build-db)
+    #[arg(long, default_value = "gtnh.db", global = true)]
     data: String,
 
     /// Emit JSON instead of human-readable text
@@ -21,12 +21,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Build gtnh.db from nesql-db.script
+    BuildDb {
+        /// Path to the HSQLDB script file
+        #[arg(default_value = "nesql-db.script")]
+        script: String,
+        /// Output database path
+        #[arg(short, long, default_value = "gtnh.db")]
+        output: String,
+    },
+
     /// Search items and fluids by name
     Search {
         query: String,
         #[arg(short, long, default_value = "20")]
         limit: usize,
-        /// Also search within item and fluid tooltips
+        /// Also search within item tooltips
         #[arg(short, long)]
         tooltip: bool,
     },
@@ -86,15 +96,31 @@ enum SortBy {
     Fuel,
 }
 
-// ===== Helpers =====
+// ===== ID translation =====
 
-const VOLTAGE_TIERS: &[&str] = &[
-    "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV", "UEV", "UIV", "UMV", "UXV",
-];
-
-fn tier_name(tier: i32) -> &'static str {
-    VOLTAGE_TIERS.get(tier as usize).copied().unwrap_or("???")
+/// Convert user-facing id (i:mod:name:dmg, f:..., o:name) to NESQL DB format.
+fn to_db_id(id: &str) -> String {
+    if id.starts_with("i:") || id.starts_with("f:") {
+        id.replace(':', "~")
+    } else if let Some(rest) = id.strip_prefix("o:") {
+        format!("od~{rest}")
+    } else {
+        id.to_string()
+    }
 }
+
+/// Convert NESQL DB id back to user-facing format for display.
+fn from_db_id(id: &str) -> String {
+    if id.starts_with("i~") || id.starts_with("f~") {
+        id.replace('~', ":")
+    } else if let Some(rest) = id.strip_prefix("od~") {
+        format!("o:{rest}")
+    } else {
+        id.to_string()
+    }
+}
+
+// ===== Helpers =====
 
 fn fmt_eu(eu: i64) -> String {
     if eu >= 1_000_000_000 {
@@ -117,17 +143,14 @@ fn fmt_duration(ticks: i32) -> String {
     }
 }
 
-/// EU-per-output-unit for a GT recipe producing `output_amount` units. Lower = better.
 fn eu_per_output(gt: &GtRecipe, output_amount: i32) -> i64 {
-    let amount = output_amount.max(1) as i64;
-    gt.eu_total() / amount
+    gt.eu_total() / output_amount.max(1) as i64
 }
 
-/// Sort key for a recipe list. Recipes without GT data sort last for EU/time sorts.
 fn fuel_value(recipe: &Recipe) -> Option<i64> {
     recipe.gt_recipe.as_ref()?.metadata.iter().find_map(|m| {
-        if m.key.as_deref() == Some("fuel_value") {
-            Some(m.value as i64)
+        if m.key == "fuel_value" {
+            Some(m.value)
         } else {
             None
         }
@@ -137,7 +160,7 @@ fn fuel_value(recipe: &Recipe) -> Option<i64> {
 fn sort_key(recipe: &Recipe, target_id: &str, by: &SortBy) -> i64 {
     match by {
         SortBy::Eu => {
-            let output_amt = recipe
+            let amt = recipe
                 .outputs()
                 .find(|io| io.goods_id.as_deref() == Some(target_id))
                 .map(|io| io.amount)
@@ -145,7 +168,7 @@ fn sort_key(recipe: &Recipe, target_id: &str, by: &SortBy) -> i64 {
             recipe
                 .gt_recipe
                 .as_ref()
-                .map(|gt| eu_per_output(gt, output_amt))
+                .map(|gt| eu_per_output(gt, amt))
                 .unwrap_or(i64::MAX)
         }
         SortBy::Time => recipe
@@ -154,35 +177,30 @@ fn sort_key(recipe: &Recipe, target_id: &str, by: &SortBy) -> i64 {
             .map(|gt| gt.duration_ticks as i64)
             .unwrap_or(i64::MAX),
         SortBy::Inputs => recipe.inputs().count() as i64,
-        // Negate so highest fuel_value sorts first (ascending key = best first)
         SortBy::Fuel => -fuel_value(recipe).unwrap_or(0),
     }
 }
 
 fn print_gt_recipe(gt: &GtRecipe) {
-    // Fuel recipes have voltage=0; show fuel_value instead of the useless "0 EU" line
-    let is_fuel_recipe = gt.voltage == 0 && gt.duration_ticks == 0;
-    if !is_fuel_recipe {
-        let total = gt.eu_total();
+    let is_fuel = gt.voltage == 0 && gt.duration_ticks == 0;
+    if !is_fuel {
         println!(
             "  GT:    {} EU/t × {}A × {}t = {} ({})  [{}]",
             gt.voltage,
             gt.amperage,
             gt.duration_ticks,
-            fmt_eu(total),
+            fmt_eu(gt.eu_total()),
             fmt_duration(gt.duration_ticks),
-            tier_name(gt.voltage_tier),
+            gt.voltage_tier,
         );
     }
     if !gt.metadata.is_empty() {
         let meta: Vec<_> = gt
             .metadata
             .iter()
-            .filter_map(|m| Some(format!("{}={}", m.key.as_deref()?, m.value)))
+            .map(|m| format!("{}={}", m.key, m.value))
             .collect();
-        if !meta.is_empty() {
-            println!("  Meta:  {}", meta.join("  "));
-        }
+        println!("  Meta:  {}", meta.join("  "));
     }
 }
 
@@ -197,32 +215,35 @@ fn print_recipe(repo: &Repository, recipe: &Recipe) {
     }
     println!("  Inputs:");
     for io in recipe.inputs() {
-        let name = io
-            .goods_id
-            .as_deref()
-            .map(|id| repo.name_of(id))
-            .unwrap_or("?");
-        let id = io.goods_id.as_deref().unwrap_or("?");
-        println!("    {:>4}×  {:<35}  [{}]", io.amount, name, id);
+        let db_id = io.goods_id.as_deref().unwrap_or("?");
+        let name = repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
+        println!(
+            "    {:>4}×  {:<35}  [{}]",
+            io.amount,
+            name,
+            from_db_id(db_id)
+        );
     }
     println!("  Outputs:");
     for io in recipe.outputs() {
-        let name = io
-            .goods_id
-            .as_deref()
-            .map(|id| repo.name_of(id))
-            .unwrap_or("?");
-        let id = io.goods_id.as_deref().unwrap_or("?");
+        let db_id = io.goods_id.as_deref().unwrap_or("?");
+        let name = repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
         let prob = if io.probability < 1.0 {
             format!("  ({:.0}%)", io.probability * 100.0)
         } else {
             String::new()
         };
-        println!("    {:>4}×  {:<35}  [{}]{}", io.amount, name, id, prob);
+        println!(
+            "    {:>4}×  {:<35}  [{}]{}",
+            io.amount,
+            name,
+            from_db_id(db_id),
+            prob
+        );
     }
 }
 
-fn print_recipe_list(repo: &Repository, recipes: &[&Recipe], target_id: &str, by: &SortBy) {
+fn print_recipe_list(repo: &Repository, recipes: &[Recipe], target_id: &str, by: &SortBy) {
     for (i, recipe) in recipes.iter().enumerate() {
         let output_amt = recipe
             .outputs()
@@ -230,15 +251,14 @@ fn print_recipe_list(repo: &Repository, recipes: &[&Recipe], target_id: &str, by
             .map(|io| io.amount)
             .unwrap_or(1);
 
-        let efficiency_note = recipe.gt_recipe.as_ref().map(|gt| {
+        let note = recipe.gt_recipe.as_ref().map(|gt| {
             if let Some(fv) = fuel_value(recipe) {
                 format!("  →  fuel_value={fv}")
             } else {
-                let epo = eu_per_output(gt, output_amt);
                 format!(
                     "  →  {}  ({} EU/output)",
                     fmt_eu(gt.eu_total()),
-                    fmt_eu(epo)
+                    fmt_eu(eu_per_output(gt, output_amt))
                 )
             }
         });
@@ -248,35 +268,25 @@ fn print_recipe_list(repo: &Repository, recipes: &[&Recipe], target_id: &str, by
             i + 1,
             recipe.id,
             recipe.recipe_type_name.as_deref().unwrap_or("?"),
-            efficiency_note.as_deref().unwrap_or(""),
+            note.as_deref().unwrap_or(""),
         );
         if let Some(gt) = &recipe.gt_recipe {
             print_gt_recipe(gt);
         }
         println!("  Inputs:");
         for io in recipe.inputs() {
-            let name = io
-                .goods_id
-                .as_deref()
-                .map(|id| repo.name_of(id))
-                .unwrap_or("?");
-            println!(
-                "    {:>4}×  {}",
-                io.amount,
-                if io.io_type == RecipeIoType::OreDictInput {
-                    format!("{} (ore dict)", io.goods_id.as_deref().unwrap_or("?"))
-                } else {
-                    name.to_string()
-                }
-            );
+            let db_id = io.goods_id.as_deref().unwrap_or("?");
+            let label = if io.io_type == RecipeIoType::OreDictInput {
+                format!("{} (ore dict)", from_db_id(db_id))
+            } else {
+                repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string())
+            };
+            println!("    {:>4}×  {}", io.amount, label);
         }
         println!("  Outputs:");
         for io in recipe.outputs() {
-            let name = io
-                .goods_id
-                .as_deref()
-                .map(|id| repo.name_of(id))
-                .unwrap_or("?");
+            let db_id = io.goods_id.as_deref().unwrap_or("?");
+            let name = repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
             let prob = if io.probability < 1.0 {
                 format!("  ({:.0}%)", io.probability * 100.0)
             } else {
@@ -293,17 +303,29 @@ fn print_recipe_list(repo: &Repository, recipes: &[&Recipe], target_id: &str, by
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // build-db doesn't need an existing database
+    if let Command::BuildDb { script, output } = &cli.command {
+        eprintln!("Building {} from {}...", output, script);
+        build_db(script, output, |n| eprintln!("  {} lines processed...", n))?;
+        eprintln!("Done.");
+        return Ok(());
+    }
+
     eprintln!("Loading {}...", cli.data);
-    let repo = Repository::from_file(&cli.data)?;
+    let repo = Repository::open(&cli.data)?;
 
     match &cli.command {
+        Command::BuildDb { .. } => unreachable!(),
+
         Command::Search {
             query,
             limit,
             tooltip,
         } => {
-            let items = repo.search_items(query, *tooltip, Some(*limit));
-            let fluids = repo.search_fluids(query, *tooltip, Some(*limit));
+            let db_query = to_db_id(query); // pass through; search is text-based not id-based
+            let _ = db_query;
+            let items = repo.search_items(query, *tooltip, Some(*limit))?;
+            let fluids = repo.search_fluids(query, *tooltip, Some(*limit))?;
 
             if cli.json {
                 println!(
@@ -313,11 +335,11 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            let items_truncated = items.len() == *limit;
+            let trunc_i = items.len() == *limit;
             println!(
                 "Items ({} of {}):",
                 items.len(),
-                if items_truncated {
+                if trunc_i {
                     format!("{}+", items.len())
                 } else {
                     items.len().to_string()
@@ -328,18 +350,18 @@ fn main() -> Result<()> {
                     "  {:<50}  {}  [{}]",
                     item.name.as_deref().unwrap_or("?"),
                     item.mod_name.as_deref().unwrap_or("?"),
-                    item.id,
+                    from_db_id(&item.id)
                 );
             }
-            if items_truncated {
+            if trunc_i {
                 println!("  … use --limit to see more");
             }
 
-            let fluids_truncated = fluids.len() == *limit;
+            let trunc_f = fluids.len() == *limit;
             println!(
                 "\nFluids ({} of {}):",
                 fluids.len(),
-                if fluids_truncated {
+                if trunc_f {
                     format!("{}+", fluids.len())
                 } else {
                     fluids.len().to_string()
@@ -350,24 +372,25 @@ fn main() -> Result<()> {
                     "  {:<50}  {}  [{}]",
                     fluid.name.as_deref().unwrap_or("?"),
                     fluid.mod_name.as_deref().unwrap_or("?"),
-                    fluid.id,
+                    from_db_id(&fluid.id)
                 );
             }
-            if fluids_truncated {
+            if trunc_f {
                 println!("  … use --limit to see more");
             }
         }
 
         Command::Item { id } => {
+            let db_id = to_db_id(id);
             let item = repo
-                .get_item(id)
+                .get_item(&db_id)?
                 .ok_or_else(|| anyhow::anyhow!("Item not found: {id}"))?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(item)?);
+                println!("{}", serde_json::to_string_pretty(&item)?);
                 return Ok(());
             }
             println!("{}", item.name.as_deref().unwrap_or("?"));
-            println!("  id:            {}", item.id);
+            println!("  id:            {}", from_db_id(&item.id));
             println!(
                 "  mod:           {}",
                 item.mod_name.as_deref().unwrap_or("?")
@@ -382,32 +405,26 @@ fn main() -> Result<()> {
                 println!("  nbt:           {}", nbt);
             }
             if let Some(c) = &item.container {
-                println!(
-                    "  container of:  {}  ({}mB)",
-                    c.fluid_id
-                        .as_deref()
-                        .map(|id| repo.name_of(id))
-                        .unwrap_or("?"),
-                    c.amount
-                );
+                let fname = c
+                    .fluid_id
+                    .as_deref()
+                    .map(|fid| repo.name_of(fid).unwrap_or_else(|_| fid.to_string()))
+                    .unwrap_or_else(|| "?".to_string());
+                println!("  container of:  {}  ({}mB)", fname, c.amount);
             }
-            println!(
-                "  produced by {} recipes, consumed by {} recipes",
-                item.production_recipe_ids.len(),
-                item.consumption_recipe_ids.len(),
-            );
         }
 
         Command::Fluid { id } => {
+            let db_id = to_db_id(id);
             let fluid = repo
-                .get_fluid(id)
+                .get_fluid(&db_id)?
                 .ok_or_else(|| anyhow::anyhow!("Fluid not found: {id}"))?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(fluid)?);
+                println!("{}", serde_json::to_string_pretty(&fluid)?);
                 return Ok(());
             }
             println!("{}", fluid.name.as_deref().unwrap_or("?"));
-            println!("  id:            {}", fluid.id);
+            println!("  id:            {}", from_db_id(&fluid.id));
             println!(
                 "  mod:           {}",
                 fluid.mod_name.as_deref().unwrap_or("?")
@@ -417,50 +434,26 @@ fn main() -> Result<()> {
                 fluid.internal_name.as_deref().unwrap_or("?")
             );
             println!("  gas:           {}", fluid.is_gas);
-            println!(
-                "  produced by {} recipes, consumed by {} recipes",
-                fluid.production_recipe_ids.len(),
-                fluid.consumption_recipe_ids.len(),
-            );
         }
 
         Command::RecipeTypes { filter } => {
-            let mut types: Vec<_> = repo.recipe_types.iter().collect();
-            if let Some(f) = filter {
-                let f = f.to_lowercase();
-                types.retain(|rt| {
-                    rt.name
-                        .as_deref()
-                        .is_some_and(|n| n.to_lowercase().contains(&f))
-                        || rt
-                            .category
-                            .as_deref()
-                            .is_some_and(|c| c.to_lowercase().contains(&f))
-                });
-            }
-            types.sort_by_key(|rt| rt.name.as_deref().unwrap_or(""));
-
+            let types = repo.recipe_types(filter.as_deref())?;
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&types)?);
                 return Ok(());
             }
-
             println!("{} recipe types:", types.len());
             for rt in &types {
-                let recipe_count = repo.recipes_by_type(rt.name.as_deref().unwrap_or("")).len();
-                println!(
-                    "  {:<45}  {:>5} recipes  [{}]",
-                    rt.name.as_deref().unwrap_or("?"),
-                    recipe_count,
-                    rt.category.as_deref().unwrap_or("?"),
-                );
+                let count = repo.recipe_count_by_type(&rt.id)?;
+                println!("  {:<45}  {:>5} recipes  [{}]", rt.name, count, rt.category);
             }
         }
 
         Command::RecipesFor { id, limit, sort } => {
-            let name = repo.name_of(id);
-            let mut recipes = repo.recipes_producing(id);
-            recipes.sort_by_key(|r| sort_key(r, id, sort));
+            let db_id = to_db_id(id);
+            let name = repo.name_of(&db_id)?;
+            let mut recipes = repo.recipes_producing(&db_id)?;
+            recipes.sort_by_key(|r| sort_key(r, &db_id, sort));
             let total = recipes.len();
             let shown: Vec<_> = recipes
                 .into_iter()
@@ -471,25 +464,25 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&shown)?);
                 return Ok(());
             }
-
             println!(
                 "{} recipes producing \"{}\" [{}]{}",
                 total,
                 name,
-                id,
+                from_db_id(&db_id),
                 if total > shown.len() {
                     format!("  (showing {})", shown.len())
                 } else {
                     String::new()
                 }
             );
-            print_recipe_list(&repo, &shown, id, sort);
+            print_recipe_list(&repo, &shown, &db_id, sort);
         }
 
         Command::RecipesUsing { id, limit, sort } => {
-            let name = repo.name_of(id);
-            let mut recipes = repo.recipes_consuming(id);
-            recipes.sort_by_key(|r| sort_key(r, id, sort));
+            let db_id = to_db_id(id);
+            let name = repo.name_of(&db_id)?;
+            let mut recipes = repo.recipes_consuming(&db_id)?;
+            recipes.sort_by_key(|r| sort_key(r, &db_id, sort));
             let total = recipes.len();
             let shown: Vec<_> = recipes
                 .into_iter()
@@ -500,37 +493,35 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&shown)?);
                 return Ok(());
             }
-
             println!(
                 "{} recipes consuming \"{}\" [{}]{}",
                 total,
                 name,
-                id,
+                from_db_id(&db_id),
                 if total > shown.len() {
                     format!("  (showing {})", shown.len())
                 } else {
                     String::new()
                 }
             );
-            print_recipe_list(&repo, &shown, id, sort);
+            print_recipe_list(&repo, &shown, &db_id, sort);
         }
 
         Command::Recipe { id } => {
             let recipe = repo
-                .get_recipe(id)
+                .get_recipe(id)?
                 .ok_or_else(|| anyhow::anyhow!("Recipe not found: {id}"))?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(recipe)?);
+                println!("{}", serde_json::to_string_pretty(&recipe)?);
                 return Ok(());
             }
-            print_recipe(&repo, recipe);
+            print_recipe(&repo, &recipe);
         }
 
         Command::RecipesOfType { name, limit, sort } => {
-            let mut recipes = repo.recipes_by_type(name);
-            // For recipes-of-type, use the first output as the target for EU/output calc
-            let dummy_target = "";
-            recipes.sort_by_key(|r| sort_key(r, dummy_target, sort));
+            let mut recipes = repo.recipes_by_type(name)?;
+            let dummy = "";
+            recipes.sort_by_key(|r| sort_key(r, dummy, sort));
             let total = recipes.len();
             let shown: Vec<_> = recipes.into_iter().take(*limit).collect();
 
@@ -538,7 +529,6 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&shown)?);
                 return Ok(());
             }
-
             println!(
                 "{} recipes of type \"{}\"{}",
                 total,
@@ -549,7 +539,7 @@ fn main() -> Result<()> {
                     String::new()
                 }
             );
-            print_recipe_list(&repo, &shown, dummy_target, sort);
+            print_recipe_list(&repo, &shown, dummy, sort);
         }
     }
 

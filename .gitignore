@@ -1,1 +1,8 @@
 /target
+/gtnh
+/data.bin
+*.md
+!README.md
+!CLAUDE.md
+*.db
+nesql*.script

@@ -1,336 +1,6 @@
-use std::collections::HashMap;
-
-use anyhow::{Result, bail};
-use rayon::prelude::*;
+use anyhow::Result;
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-
-const DATA_VERSION: i32 = 5;
-
-// ===== Raw binary reader =====
-
-struct RawReader {
-    bytes: Vec<u8>,
-}
-
-impl RawReader {
-    fn new(bytes: Vec<u8>) -> Self {
-        Self { bytes }
-    }
-
-    /// Read i32 (little-endian) at word offset `n`, i.e. byte offset `n*4`.
-    fn i32_at(&self, word_offset: usize) -> i32 {
-        let b = word_offset * 4;
-        i32::from_le_bytes(
-            self.bytes
-                .get(b..b + 4)
-                .and_then(|s| s.try_into().ok())
-                .unwrap_or([0u8; 4]),
-        )
-    }
-
-    /// Read f64 (little-endian) at word offset `n`, i.e. byte offset `n*4`.
-    /// Occupies 8 bytes (2 word slots).
-    fn f64_at(&self, word_offset: usize) -> f64 {
-        let b = word_offset * 4;
-        f64::from_le_bytes(
-            self.bytes
-                .get(b..b + 8)
-                .and_then(|s| s.try_into().ok())
-                .unwrap_or([0u8; 8]),
-        )
-    }
-
-    /// Read a length-prefixed UTF-8 string at word pointer `pointer`.
-    ///
-    /// Format: `elements[pointer]` = byte length, then bytes follow at
-    /// `pointer*4 + 4` (i.e. immediately after the length word).
-    fn str_at(&self, pointer: i32) -> Option<String> {
-        if pointer <= 0 {
-            return None;
-        }
-        let p = pointer as usize;
-        let len = self.i32_at(p) as usize;
-        if len == 0 {
-            return Some(String::new());
-        }
-        let begin = p * 4 + 4;
-        let end = begin + len;
-        if end > self.bytes.len() {
-            return None;
-        }
-        Some(String::from_utf8_lossy(&self.bytes[begin..end]).into_owned())
-    }
-
-    /// Read a length-prefixed slice of i32 values at word pointer `pointer`.
-    ///
-    /// Format: `elements[pointer]` = count, then `count` i32 values follow.
-    fn slice_at(&self, pointer: i32) -> Vec<i32> {
-        if pointer <= 0 {
-            return Vec::new();
-        }
-        let p = pointer as usize;
-        let len = self.i32_at(p) as usize;
-        (0..len).map(|i| self.i32_at(p + 1 + i)).collect()
-    }
-
-    /// Indirect string: read `elements[base + field]` as a string pointer,
-    /// then read the string at that pointer.
-    fn str_indirect(&self, base: usize, field: usize) -> Option<String> {
-        self.str_at(self.i32_at(base + field))
-    }
-
-    /// Indirect slice: read `elements[base + field]` as a slice pointer,
-    /// then read the slice at that pointer.
-    fn slice_indirect(&self, base: usize, field: usize) -> Vec<i32> {
-        self.slice_at(self.i32_at(base + field))
-    }
-
-    /// Read the id string of a `SearchableObject` at word pointer `pointer`.
-    /// The id is stored at `elements[pointer + 4]` (a string pointer).
-    fn id_at(&self, pointer: i32) -> Option<String> {
-        if pointer <= 0 {
-            return None;
-        }
-        self.str_indirect(pointer as usize, 4)
-    }
-
-    // ===== Object parsers =====
-
-    /// Parse common fields shared by `Item` and `Fluid` (the `Goods` class).
-    ///
-    /// Returns `(name, mod_name, internal_name, icon_id, tooltip,
-    ///           unlocalized_name, nbt, production_ids, consumption_ids)`.
-    fn parse_goods_common(
-        &self,
-        base: usize,
-    ) -> (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        i32,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Vec<String>,
-        Vec<String>,
-    ) {
-        let name = self.str_indirect(base, 5);
-        let mod_name = self.str_indirect(base, 6);
-        let internal_name = self.str_indirect(base, 7);
-        let icon_id = self.i32_at(base + 9);
-        let tooltip = self.str_indirect(base, 10);
-        let unlocalized_name = self.str_indirect(base, 11);
-        let nbt = self.str_indirect(base, 12);
-        // production / consumption are slices of recipe pointers; resolve to ids
-        let production = self
-            .slice_indirect(base, 13)
-            .into_iter()
-            .filter_map(|p| self.id_at(p))
-            .collect();
-        let consumption = self
-            .slice_indirect(base, 14)
-            .into_iter()
-            .filter_map(|p| self.id_at(p))
-            .collect();
-        (
-            name,
-            mod_name,
-            internal_name,
-            icon_id,
-            tooltip,
-            unlocalized_name,
-            nbt,
-            production,
-            consumption,
-        )
-    }
-
-    fn parse_item(&self, base: usize) -> Item {
-        let id = self.str_indirect(base, 4).unwrap_or_default();
-        let (
-            name,
-            mod_name,
-            internal_name,
-            icon_id,
-            tooltip,
-            unlocalized_name,
-            nbt,
-            production,
-            consumption,
-        ) = self.parse_goods_common(base);
-        let stack_size = self.i32_at(base + 15);
-        let damage = self.i32_at(base + 16);
-        let container_ptr = self.i32_at(base + 17);
-        let container = if container_ptr <= 0 {
-            None
-        } else {
-            let fc = container_ptr as usize;
-            let fluid_ptr = self.i32_at(fc);
-            let amount = self.i32_at(fc + 1);
-            let empty_ptr = self.i32_at(fc + 2);
-            Some(FluidContainerInfo {
-                fluid_id: self.id_at(fluid_ptr),
-                amount,
-                empty_item_id: self.id_at(empty_ptr),
-            })
-        };
-        Item {
-            id,
-            name,
-            mod_name,
-            internal_name,
-            icon_id,
-            tooltip,
-            unlocalized_name,
-            nbt,
-            stack_size,
-            damage,
-            container,
-            production_recipe_ids: production,
-            consumption_recipe_ids: consumption,
-        }
-    }
-
-    fn parse_fluid(&self, base: usize) -> Fluid {
-        let id = self.str_indirect(base, 4).unwrap_or_default();
-        let (
-            name,
-            mod_name,
-            internal_name,
-            icon_id,
-            tooltip,
-            unlocalized_name,
-            nbt,
-            production,
-            consumption,
-        ) = self.parse_goods_common(base);
-        let is_gas = self.i32_at(base + 15) == 1;
-        Fluid {
-            id,
-            name,
-            mod_name,
-            internal_name,
-            icon_id,
-            tooltip,
-            unlocalized_name,
-            nbt,
-            is_gas,
-            production_recipe_ids: production,
-            consumption_recipe_ids: consumption,
-        }
-    }
-
-    fn parse_ore_dict(&self, base: usize) -> OreDict {
-        let id = self.str_indirect(base, 4).unwrap_or_default();
-        let item_ids = self
-            .slice_indirect(base, 5)
-            .into_iter()
-            .filter_map(|p| self.id_at(p))
-            .collect();
-        OreDict { id, item_ids }
-    }
-
-    fn parse_recipe_type(&self, base: usize) -> RecipeType {
-        let name = self.str_indirect(base, 0);
-        let category = self.str_indirect(base, 1);
-        let dimensions = self.slice_indirect(base, 2);
-        let shapeless = self.i32_at(base + 4) == 1;
-        let singleblock_item_ids = self
-            .slice_indirect(base, 5)
-            .into_iter()
-            .filter_map(|p| self.id_at(p))
-            .collect();
-        let multiblock_item_ids = self
-            .slice_indirect(base, 3)
-            .into_iter()
-            .filter_map(|p| self.id_at(p))
-            .collect();
-        let default_crafter_ptr = self.i32_at(base + 6);
-        let default_crafter_id = self.id_at(default_crafter_ptr);
-        RecipeType {
-            name,
-            category,
-            dimensions,
-            shapeless,
-            singleblock_item_ids,
-            multiblock_item_ids,
-            default_crafter_id,
-        }
-    }
-
-    fn parse_gt_recipe(&self, base: usize) -> GtRecipe {
-        let voltage = self.i32_at(base);
-        let duration_ticks = self.i32_at(base + 1);
-        let amperage = self.i32_at(base + 2);
-        let voltage_tier = self.i32_at(base + 3);
-        let circuit_conflicts = self.i32_at(base + 5);
-        let special_value = self.i32_at(base + 6);
-        let metadata = self
-            .slice_indirect(base, 4)
-            .into_iter()
-            .map(|p| {
-                let mb = p as usize;
-                GtRecipeMetadata {
-                    key: self.str_indirect(mb, 0),
-                    value: self.f64_at(mb + 1),
-                }
-            })
-            .collect();
-        GtRecipe {
-            voltage,
-            duration_ticks,
-            amperage,
-            voltage_tier,
-            metadata,
-            circuit_conflicts,
-            special_value,
-        }
-    }
-
-    fn parse_recipe(&self, base: usize) -> Recipe {
-        let id = self.str_indirect(base, 4).unwrap_or_default();
-
-        // IO items: 5 i32s each — [io_type, goods_ptr, slot, amount, probability*100]
-        let io_raw = self.slice_indirect(base, 5);
-        let io_count = io_raw.len() / 5;
-        let mut io = Vec::with_capacity(io_count);
-        for i in 0..io_count {
-            let type_raw = io_raw[i * 5];
-            let goods_ptr = io_raw[i * 5 + 1];
-            let slot = io_raw[i * 5 + 2];
-            let amount = io_raw[i * 5 + 3];
-            let probability_raw = io_raw[i * 5 + 4];
-            io.push(RecipeIo {
-                io_type: RecipeIoType::from_i32(type_raw),
-                goods_id: self.id_at(goods_ptr),
-                slot,
-                amount,
-                probability: probability_raw as f32 / 100.0,
-            });
-        }
-
-        let recipe_type_ptr = self.i32_at(base + 6);
-        let recipe_type_name = if recipe_type_ptr <= 0 {
-            None
-        } else {
-            self.str_indirect(recipe_type_ptr as usize, 0)
-        };
-
-        let gt_recipe_ptr = self.i32_at(base + 7);
-        let gt_recipe = if gt_recipe_ptr <= 0 {
-            None
-        } else {
-            Some(self.parse_gt_recipe(gt_recipe_ptr as usize))
-        };
-
-        Recipe {
-            id,
-            recipe_type_name,
-            gt_recipe,
-            io,
-        }
-    }
-}
 
 // ===== Public data types =====
 
@@ -347,15 +17,12 @@ pub struct Item {
     pub name: Option<String>,
     pub mod_name: Option<String>,
     pub internal_name: Option<String>,
-    pub icon_id: i32,
     pub tooltip: Option<String>,
     pub unlocalized_name: Option<String>,
     pub nbt: Option<String>,
     pub stack_size: i32,
     pub damage: i32,
     pub container: Option<FluidContainerInfo>,
-    pub production_recipe_ids: Vec<String>,
-    pub consumption_recipe_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,36 +31,30 @@ pub struct Fluid {
     pub name: Option<String>,
     pub mod_name: Option<String>,
     pub internal_name: Option<String>,
-    pub icon_id: i32,
-    pub tooltip: Option<String>,
     pub unlocalized_name: Option<String>,
     pub nbt: Option<String>,
     pub is_gas: bool,
-    pub production_recipe_ids: Vec<String>,
-    pub consumption_recipe_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OreDict {
     pub id: String,
+    pub name: String,
     pub item_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecipeType {
-    pub name: Option<String>,
-    pub category: Option<String>,
-    pub dimensions: Vec<i32>,
+    pub id: String,
+    pub name: String,
+    pub category: String,
     pub shapeless: bool,
-    pub singleblock_item_ids: Vec<String>,
-    pub multiblock_item_ids: Vec<String>,
-    pub default_crafter_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GtRecipeMetadata {
-    pub key: Option<String>,
-    pub value: f64,
+    pub key: String,
+    pub value: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -401,9 +62,8 @@ pub struct GtRecipe {
     pub voltage: i32,
     pub duration_ticks: i32,
     pub amperage: i32,
-    pub voltage_tier: i32,
+    pub voltage_tier: String,
     pub circuit_conflicts: i32,
-    pub special_value: i32,
     pub metadata: Vec<GtRecipeMetadata>,
 }
 
@@ -424,28 +84,15 @@ pub enum RecipeIoType {
     FluidInput,
     ItemOutput,
     FluidOutput,
-    Unknown,
 }
 
 impl RecipeIoType {
-    fn from_i32(v: i32) -> Self {
-        match v {
-            0 => Self::ItemInput,
-            1 => Self::OreDictInput,
-            2 => Self::FluidInput,
-            3 => Self::ItemOutput,
-            4 => Self::FluidOutput,
-            _ => Self::Unknown,
-        }
-    }
-
     pub fn is_input(self) -> bool {
         matches!(
             self,
             Self::ItemInput | Self::OreDictInput | Self::FluidInput
         )
     }
-
     pub fn is_output(self) -> bool {
         matches!(self, Self::ItemOutput | Self::FluidOutput)
     }
@@ -473,7 +120,6 @@ impl Recipe {
     pub fn inputs(&self) -> impl Iterator<Item = &RecipeIo> {
         self.io.iter().filter(|io| io.io_type.is_input())
     }
-
     pub fn outputs(&self) -> impl Iterator<Item = &RecipeIo> {
         self.io.iter().filter(|io| io.io_type.is_output())
     }
@@ -482,263 +128,698 @@ impl Recipe {
 // ===== Repository =====
 
 pub struct Repository {
-    pub items: Vec<Item>,
-    pub fluids: Vec<Fluid>,
-    pub ore_dicts: Vec<OreDict>,
-    pub recipe_types: Vec<RecipeType>,
-    pub recipes: Vec<Recipe>,
-
-    item_by_id: HashMap<String, usize>,
-    fluid_by_id: HashMap<String, usize>,
-    ore_dict_by_id: HashMap<String, usize>,
-    recipe_by_id: HashMap<String, usize>,
+    conn: Connection,
 }
 
 impl Repository {
-    pub fn from_file(path: &str) -> Result<Self> {
-        use flate2::read::GzDecoder;
-        use std::io::Read;
-
-        let compressed = std::fs::read(path)?;
-        let mut decoder = GzDecoder::new(&compressed[..]);
-        let mut bytes = Vec::new();
-        decoder.read_to_end(&mut bytes)?;
-        Self::from_bytes(bytes)
+    pub fn open(path: &str) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA query_only=ON;")?;
+        Ok(Repository { conn })
     }
 
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        let r = RawReader::new(bytes);
+    // --- Private helpers ---
 
-        let version = r.i32_at(0);
-        if version != DATA_VERSION {
-            bail!(
-                "Unsupported data version: {} (required: {})",
-                version,
-                DATA_VERSION
-            );
+    fn fetch_gt_recipe(&self, recipe_id: &str) -> Result<Option<GtRecipe>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT gtr.id, gtr.voltage, gtr.duration, gtr.amperage, gtr.voltage_tier,
+                    gtr.recipe_special_value
+             FROM greg_tech_recipe gtr WHERE gtr.recipe_id = ?",
+                params![recipe_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((gt_id, voltage, duration_ticks, amperage, voltage_tier, circuit_conflicts)) = row
+        else {
+            return Ok(None);
+        };
+
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT metadata_key, metadata_value
+             FROM greg_tech_recipe_metadata WHERE greg_tech_recipe_id = ?",
+        )?;
+        let metadata = stmt
+            .query_map(params![gt_id], |r| {
+                Ok(GtRecipeMetadata {
+                    key: r.get(0)?,
+                    value: r.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(Some(GtRecipe {
+            voltage,
+            duration_ticks,
+            amperage,
+            voltage_tier,
+            circuit_conflicts,
+            metadata,
+        }))
+    }
+
+    fn fetch_recipe_io(&self, recipe_id: &str) -> Result<Vec<RecipeIo>> {
+        let mut io: Vec<RecipeIo> = Vec::new();
+
+        // Item inputs via item_group
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT rig.item_inputs_key,
+                CASE WHEN od.id IS NOT NULL THEN od.id ELSE MIN(igs.item_stacks_item_id) END,
+                CASE WHEN od.id IS NOT NULL THEN 1 ELSE 0 END,
+                MIN(igs.item_stacks_stack_size)
+             FROM recipe_item_group rig
+             JOIN item_group ig ON ig.id = rig.item_inputs_id
+             JOIN item_group_item_stacks igs ON igs.item_group_id = rig.item_inputs_id
+             LEFT JOIN ore_dictionary od
+                ON od.item_group_id = COALESCE(ig.base_item_group_id, ig.id)
+             WHERE rig.recipe_id = ?
+             GROUP BY rig.item_inputs_key",
+        )?;
+        for row in stmt.query_map(params![recipe_id], |r| {
+            Ok((
+                r.get::<_, i32>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, i32>(2)? != 0,
+                r.get::<_, i32>(3)?,
+            ))
+        })? {
+            let (slot, goods_id, is_ore_dict, amount) = row?;
+            io.push(RecipeIo {
+                io_type: if is_ore_dict {
+                    RecipeIoType::OreDictInput
+                } else {
+                    RecipeIoType::ItemInput
+                },
+                goods_id,
+                slot,
+                amount,
+                probability: 1.0,
+            });
         }
 
-        // Header: word offsets 1-7 are pointers to top-level slices
-        let item_ptrs = r.slice_at(r.i32_at(1));
-        let fluid_ptrs = r.slice_at(r.i32_at(2));
-        let ore_dict_ptrs = r.slice_at(r.i32_at(3));
-        let recipe_type_ptrs = r.slice_at(r.i32_at(4));
-        let recipe_ptrs = r.slice_at(r.i32_at(5));
-        // offset 6 = service slice (not used here)
-        let remap_ptrs = r.slice_at(r.i32_at(7));
+        // Fluid inputs
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT rfg.fluid_inputs_key, fgfs.fluid_stacks_fluid_id, fgfs.fluid_stacks_amount
+             FROM recipe_fluid_group rfg
+             JOIN fluid_group_fluid_stacks fgfs ON fgfs.fluid_group_id = rfg.fluid_inputs_id
+             WHERE rfg.recipe_id = ?",
+        )?;
+        for row in stmt.query_map(params![recipe_id], |r| {
+            Ok((
+                r.get::<_, i32>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, i32>(2)?,
+            ))
+        })? {
+            let (slot, goods_id, amount) = row?;
+            io.push(RecipeIo {
+                io_type: RecipeIoType::FluidInput,
+                goods_id,
+                slot,
+                amount,
+                probability: 1.0,
+            });
+        }
 
-        let items: Vec<Item> = item_ptrs
-            .iter()
-            .map(|&p| r.parse_item(p as usize))
-            .collect();
-        let fluids: Vec<Fluid> = fluid_ptrs
-            .iter()
-            .map(|&p| r.parse_fluid(p as usize))
-            .collect();
-        let ore_dicts: Vec<OreDict> = ore_dict_ptrs
-            .iter()
-            .map(|&p| r.parse_ore_dict(p as usize))
-            .collect();
-        let recipe_types: Vec<RecipeType> = recipe_type_ptrs
-            .iter()
-            .map(|&p| r.parse_recipe_type(p as usize))
-            .collect();
-        let recipes: Vec<Recipe> = recipe_ptrs
-            .iter()
-            .map(|&p| r.parse_recipe(p as usize))
-            .collect();
+        // Item outputs
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT item_outputs_key, item_outputs_value_item_id,
+                    item_outputs_value_stack_size, item_outputs_value_probability
+             FROM recipe_item_outputs WHERE recipe_id = ?",
+        )?;
+        for row in stmt.query_map(params![recipe_id], |r| {
+            Ok((
+                r.get::<_, i32>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, i32>(2)?,
+                r.get::<_, f64>(3)?,
+            ))
+        })? {
+            let (slot, goods_id, amount, prob) = row?;
+            io.push(RecipeIo {
+                io_type: RecipeIoType::ItemOutput,
+                goods_id,
+                slot,
+                amount,
+                probability: prob as f32,
+            });
+        }
 
-        // Primary id → index maps
-        let item_by_id: HashMap<String, usize> = items
-            .iter()
-            .enumerate()
-            .map(|(i, x)| (x.id.clone(), i))
-            .collect();
-        let fluid_by_id: HashMap<String, usize> = fluids
-            .iter()
-            .enumerate()
-            .map(|(i, x)| (x.id.clone(), i))
-            .collect();
-        let ore_dict_by_id: HashMap<String, usize> = ore_dicts
-            .iter()
-            .enumerate()
-            .map(|(i, x)| (x.id.clone(), i))
-            .collect();
-        let mut recipe_by_id: HashMap<String, usize> = recipes
-            .iter()
-            .enumerate()
-            .map(|(i, x)| (x.id.clone(), i))
-            .collect();
+        // Fluid outputs
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT fluid_outputs_key, fluid_outputs_value_fluid_id,
+                    fluid_outputs_value_amount, fluid_outputs_value_probability
+             FROM recipe_fluid_outputs WHERE recipe_id = ?",
+        )?;
+        for row in stmt.query_map(params![recipe_id], |r| {
+            Ok((
+                r.get::<_, i32>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, i32>(2)?,
+                r.get::<_, f64>(3)?,
+            ))
+        })? {
+            let (slot, goods_id, amount, prob) = row?;
+            io.push(RecipeIo {
+                io_type: RecipeIoType::FluidOutput,
+                goods_id,
+                slot,
+                amount,
+                probability: prob as f32,
+            });
+        }
 
-        // Remap: additional aliases — each entry is (id_string_ptr, target_recipe_ptr)
-        for &remap_pos in &remap_ptrs {
-            let id_str_ptr = r.i32_at(remap_pos as usize);
-            let target_ptr = r.i32_at(remap_pos as usize + 1);
-            if let Some(id) = r.str_at(id_str_ptr) {
-                if let Some(idx) = recipe_ptrs.iter().position(|&p| p == target_ptr) {
-                    recipe_by_id.entry(id).or_insert(idx);
-                }
+        // Inputs first, then outputs; within each group sorted by slot
+        io.sort_by_key(|e| (e.io_type.is_output() as u8, e.slot));
+        Ok(io)
+    }
+
+    fn fetch_recipe(&self, id: &str) -> Result<Option<Recipe>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT r.id, rt.type FROM recipe r
+             LEFT JOIN recipe_type rt ON rt.id = r.recipe_type_id
+             WHERE r.id = ?",
+                params![id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+
+        let Some((recipe_id, recipe_type_name)) = row else {
+            return Ok(None);
+        };
+        let gt_recipe = self.fetch_gt_recipe(&recipe_id)?;
+        let io = self.fetch_recipe_io(&recipe_id)?;
+        Ok(Some(Recipe {
+            id: recipe_id,
+            recipe_type_name,
+            gt_recipe,
+            io,
+        }))
+    }
+
+    fn fetch_recipes_by_ids(&self, ids: Vec<String>) -> Result<Vec<Recipe>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(r) = self.fetch_recipe(&id)? {
+                out.push(r);
+            }
+        }
+        Ok(out)
+    }
+
+    // --- Public query methods ---
+
+    pub fn get_item(&self, id: &str) -> Result<Option<Item>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, localized_name, mod_id, internal_name, tooltip,
+                    unlocalized_name, nbt, max_stack_size, item_damage
+             FROM item WHERE id = ?",
+                params![id],
+                |r| {
+                    Ok(Item {
+                        id: r.get(0)?,
+                        name: nonempty(r.get(1)?),
+                        mod_name: nonempty(r.get(2)?),
+                        internal_name: nonempty(r.get(3)?),
+                        tooltip: nonempty(r.get(4)?),
+                        unlocalized_name: nonempty(r.get(5)?),
+                        nbt: nonempty(r.get(6)?),
+                        stack_size: r.get(7)?,
+                        damage: r.get(8)?,
+                        container: None,
+                    })
+                },
+            )
+            .optional()?;
+
+        let Some(mut item) = row else { return Ok(None) };
+        item.container = self
+            .conn
+            .query_row(
+                "SELECT fluid_stack_fluid_id, fluid_stack_amount, empty_container_id
+             FROM fluid_container WHERE container_id = ?",
+                params![id],
+                |r| {
+                    Ok(FluidContainerInfo {
+                        fluid_id: r.get(0)?,
+                        amount: r.get(1)?,
+                        empty_item_id: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(Some(item))
+    }
+
+    pub fn get_fluid(&self, id: &str) -> Result<Option<Fluid>> {
+        self.conn
+            .query_row(
+                "SELECT id, localized_name, mod_id, internal_name, unlocalized_name, nbt, gaseous
+             FROM fluid WHERE id = ?",
+                params![id],
+                |r| {
+                    Ok(Fluid {
+                        id: r.get(0)?,
+                        name: nonempty(r.get(1)?),
+                        mod_name: nonempty(r.get(2)?),
+                        internal_name: nonempty(r.get(3)?),
+                        unlocalized_name: nonempty(r.get(4)?),
+                        nbt: nonempty(r.get(5)?),
+                        is_gas: r.get::<_, i32>(6)? != 0,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn get_ore_dict(&self, id: &str) -> Result<Option<OreDict>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, name, item_group_id FROM ore_dictionary WHERE id = ?",
+                params![id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((ore_id, name, ig_id)) = row else {
+            return Ok(None);
+        };
+        let item_ids = if let Some(ig) = ig_id {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT item_stacks_item_id FROM item_group_item_stacks
+                 WHERE item_group_id = ? AND item_stacks_item_id IS NOT NULL",
+            )?;
+            stmt.query_map(params![ig], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?
+        } else {
+            Vec::new()
+        };
+        Ok(Some(OreDict {
+            id: ore_id,
+            name,
+            item_ids,
+        }))
+    }
+
+    pub fn get_recipe(&self, id: &str) -> Result<Option<Recipe>> {
+        self.fetch_recipe(id)
+    }
+
+    pub fn search_items(
+        &self,
+        query: &str,
+        tooltip: bool,
+        limit: Option<usize>,
+    ) -> Result<Vec<Item>> {
+        let q = format!("%{}%", query.to_lowercase());
+        let lim = limit.map(|n| n as i64).unwrap_or(i64::MAX);
+        let sql = if tooltip {
+            "SELECT id, localized_name, mod_id, internal_name, tooltip,
+                    unlocalized_name, nbt, max_stack_size, item_damage
+             FROM item
+             WHERE lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
+                OR lower(internal_name) LIKE ?1 OR lower(tooltip) LIKE ?1
+             LIMIT ?2"
+        } else {
+            "SELECT id, localized_name, mod_id, internal_name, tooltip,
+                    unlocalized_name, nbt, max_stack_size, item_damage
+             FROM item
+             WHERE lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
+                OR lower(internal_name) LIKE ?1
+             LIMIT ?2"
+        };
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        stmt.query_map(params![q, lim], |r| {
+            Ok(Item {
+                id: r.get(0)?,
+                name: nonempty(r.get(1)?),
+                mod_name: nonempty(r.get(2)?),
+                internal_name: nonempty(r.get(3)?),
+                tooltip: nonempty(r.get(4)?),
+                unlocalized_name: nonempty(r.get(5)?),
+                nbt: nonempty(r.get(6)?),
+                stack_size: r.get(7)?,
+                damage: r.get(8)?,
+                container: None,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+    }
+
+    pub fn search_fluids(
+        &self,
+        query: &str,
+        _tooltip: bool,
+        limit: Option<usize>,
+    ) -> Result<Vec<Fluid>> {
+        let q = format!("%{}%", query.to_lowercase());
+        let lim = limit.map(|n| n as i64).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, localized_name, mod_id, internal_name, unlocalized_name, nbt, gaseous
+             FROM fluid
+             WHERE lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
+                OR lower(internal_name) LIKE ?1
+             LIMIT ?2",
+        )?;
+        stmt.query_map(params![q, lim], |r| {
+            Ok(Fluid {
+                id: r.get(0)?,
+                name: nonempty(r.get(1)?),
+                mod_name: nonempty(r.get(2)?),
+                internal_name: nonempty(r.get(3)?),
+                unlocalized_name: nonempty(r.get(4)?),
+                nbt: nonempty(r.get(5)?),
+                is_gas: r.get::<_, i32>(6)? != 0,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+    }
+
+    pub fn recipes_producing(&self, goods_id: &str) -> Result<Vec<Recipe>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT recipe_id FROM recipe_item_outputs
+             WHERE item_outputs_value_item_id = ?
+             UNION
+             SELECT DISTINCT recipe_id FROM recipe_fluid_outputs
+             WHERE fluid_outputs_value_fluid_id = ?",
+        )?;
+        let ids: Vec<String> = stmt
+            .query_map(params![goods_id, goods_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        self.fetch_recipes_by_ids(ids)
+    }
+
+    pub fn recipes_consuming(&self, goods_id: &str) -> Result<Vec<Recipe>> {
+        let ids: Vec<String> = if goods_id.starts_with("od~") {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT DISTINCT rig.recipe_id
+                 FROM recipe_item_group rig
+                 JOIN item_group ig ON ig.id = rig.item_inputs_id
+                 JOIN ore_dictionary od
+                    ON od.item_group_id = COALESCE(ig.base_item_group_id, ig.id)
+                 WHERE od.id = ?",
+            )?;
+            stmt.query_map(params![goods_id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        } else if goods_id.starts_with("f~") {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT DISTINCT recipe_id FROM recipe_fluid_inputs_fluids
+                 WHERE fluid_inputs_fluids_id = ?",
+            )?;
+            stmt.query_map(params![goods_id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        } else {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT DISTINCT recipe_id FROM recipe_item_inputs_items
+                 WHERE item_inputs_items_id = ?",
+            )?;
+            stmt.query_map(params![goods_id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        self.fetch_recipes_by_ids(ids)
+    }
+
+    pub fn recipes_by_type(&self, type_name: &str) -> Result<Vec<Recipe>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT r.id FROM recipe r
+             JOIN recipe_type rt ON rt.id = r.recipe_type_id
+             WHERE rt.type = ?",
+        )?;
+        let ids: Vec<String> = stmt
+            .query_map(params![type_name], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        self.fetch_recipes_by_ids(ids)
+    }
+
+    pub fn name_of(&self, id: &str) -> Result<String> {
+        if let Some(n) = self
+            .conn
+            .query_row(
+                "SELECT localized_name FROM item WHERE id = ?",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            if !n.is_empty() {
+                return Ok(n);
             }
         }
 
-        Ok(Repository {
-            items,
-            fluids,
-            ore_dicts,
-            recipe_types,
-            recipes,
-            item_by_id,
-            fluid_by_id,
-            ore_dict_by_id,
-            recipe_by_id,
-        })
-    }
-
-    // ===== Lookups by id =====
-
-    pub fn get_item(&self, id: &str) -> Option<&Item> {
-        self.item_by_id.get(id).map(|&i| &self.items[i])
-    }
-
-    pub fn get_fluid(&self, id: &str) -> Option<&Fluid> {
-        self.fluid_by_id.get(id).map(|&i| &self.fluids[i])
-    }
-
-    pub fn get_ore_dict(&self, id: &str) -> Option<&OreDict> {
-        self.ore_dict_by_id.get(id).map(|&i| &self.ore_dicts[i])
-    }
-
-    pub fn get_recipe(&self, id: &str) -> Option<&Recipe> {
-        self.recipe_by_id.get(id).map(|&i| &self.recipes[i])
-    }
-
-    // ===== Search =====
-
-    /// Find items whose name, id, or internal name contains `query` (case-insensitive).
-    /// If `tooltip` is true, also searches the tooltip field.
-    /// If `limit` is `Some(n)`, returns at most `n` results and stops early once reached.
-    /// If `limit` is `None`, searches in parallel and returns all matches.
-    pub fn search_items<'a>(
-        &'a self,
-        query: &str,
-        tooltip: bool,
-        limit: Option<usize>,
-    ) -> Vec<&'a Item> {
-        let q = query.to_lowercase();
-        let pred = |item: &&Item| {
-            item.id.to_lowercase().contains(&q)
-                || item
-                    .name
-                    .as_deref()
-                    .is_some_and(|n| n.to_lowercase().contains(&q))
-                || item
-                    .internal_name
-                    .as_deref()
-                    .is_some_and(|n| n.to_lowercase().contains(&q))
-                || (tooltip
-                    && item
-                        .tooltip
-                        .as_deref()
-                        .is_some_and(|n| n.to_lowercase().contains(&q)))
-        };
-        if let Some(n) = limit {
-            self.items.iter().filter(pred).take(n).collect()
-        } else {
-            self.items.par_iter().filter(pred).collect()
+        if let Some(n) = self
+            .conn
+            .query_row(
+                "SELECT localized_name FROM fluid WHERE id = ?",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            if !n.is_empty() {
+                return Ok(n);
+            }
         }
-    }
 
-    /// Find fluids whose name, id, or internal name contains `query` (case-insensitive).
-    /// If `tooltip` is true, also searches the tooltip field.
-    /// If `limit` is `Some(n)`, returns at most `n` results and stops early once reached.
-    /// If `limit` is `None`, searches in parallel and returns all matches.
-    pub fn search_fluids<'a>(
-        &'a self,
-        query: &str,
-        tooltip: bool,
-        limit: Option<usize>,
-    ) -> Vec<&'a Fluid> {
-        let q = query.to_lowercase();
-        let pred = |f: &&Fluid| {
-            f.id.to_lowercase().contains(&q)
-                || f.name
-                    .as_deref()
-                    .is_some_and(|n| n.to_lowercase().contains(&q))
-                || f.internal_name
-                    .as_deref()
-                    .is_some_and(|n| n.to_lowercase().contains(&q))
-                || (tooltip
-                    && f.tooltip
-                        .as_deref()
-                        .is_some_and(|n| n.to_lowercase().contains(&q)))
-        };
-        if let Some(n) = limit {
-            self.fluids.iter().filter(pred).take(n).collect()
-        } else {
-            self.fluids.par_iter().filter(pred).collect()
+        if let Some(n) = self
+            .conn
+            .query_row(
+                "SELECT name FROM ore_dictionary WHERE id = ?",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(n);
         }
+
+        Ok(id.to_string())
     }
 
-    /// All recipes that output the given item or fluid id.
-    pub fn recipes_producing<'a>(&'a self, goods_id: &str) -> Vec<&'a Recipe> {
-        self.recipes
-            .iter()
-            .filter(|r| {
-                r.io.iter()
-                    .any(|io| io.io_type.is_output() && io.goods_id.as_deref() == Some(goods_id))
+    pub fn mod_of(&self, id: &str) -> Result<Option<String>> {
+        if let Some(m) = self
+            .conn
+            .query_row("SELECT mod_id FROM item WHERE id = ?", params![id], |r| {
+                r.get::<_, String>(0)
             })
-            .collect()
-    }
+            .optional()?
+        {
+            return Ok(Some(m));
+        }
 
-    /// All recipes that consume the given item, fluid, or ore dict id as input.
-    pub fn recipes_consuming<'a>(&'a self, goods_id: &str) -> Vec<&'a Recipe> {
-        self.recipes
-            .iter()
-            .filter(|r| {
-                r.io.iter()
-                    .any(|io| io.io_type.is_input() && io.goods_id.as_deref() == Some(goods_id))
+        if let Some(m) = self
+            .conn
+            .query_row("SELECT mod_id FROM fluid WHERE id = ?", params![id], |r| {
+                r.get::<_, String>(0)
             })
-            .collect()
+            .optional()?
+        {
+            return Ok(Some(m));
+        }
+
+        Ok(None)
     }
 
-    /// All recipes of a given recipe type name.
-    pub fn recipes_by_type<'a>(&'a self, type_name: &str) -> Vec<&'a Recipe> {
-        self.recipes
-            .iter()
-            .filter(|r| r.recipe_type_name.as_deref() == Some(type_name))
-            .collect()
+    pub fn summary(&self) -> Result<String> {
+        let items: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM item", [], |r| r.get(0))?;
+        let fluids: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM fluid", [], |r| r.get(0))?;
+        let ods: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM ore_dictionary", [], |r| r.get(0))?;
+        let rts: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM recipe_type", [], |r| r.get(0))?;
+        let recipes: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM recipe", [], |r| r.get(0))?;
+        Ok(format!(
+            "items={items} fluids={fluids} ore_dicts={ods} recipe_types={rts} recipes={recipes}"
+        ))
     }
 
-    /// Resolve any goods id (item / fluid / ore dict) to its human-readable name.
-    pub fn name_of<'a>(&'a self, id: &'a str) -> &'a str {
-        if let Some(item) = self.get_item(id) {
-            return item.name.as_deref().unwrap_or(id);
+    pub fn recipe_types(&self, filter: Option<&str>) -> Result<Vec<RecipeType>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, type, category, shapeless FROM recipe_type ORDER BY type")?;
+        let mut types: Vec<RecipeType> = stmt
+            .query_map([], |r| {
+                Ok(RecipeType {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    category: r.get(2)?,
+                    shapeless: r.get::<_, i32>(3)? != 0,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+
+        if let Some(f) = filter {
+            let f = f.to_lowercase();
+            types.retain(|rt| {
+                rt.name.to_lowercase().contains(&f) || rt.category.to_lowercase().contains(&f)
+            });
         }
-        if let Some(fluid) = self.get_fluid(id) {
-            return fluid.name.as_deref().unwrap_or(id);
-        }
-        id
+        Ok(types)
     }
 
-    /// Resolve any goods id to its mod name.
-    pub fn mod_of<'a>(&'a self, id: &'a str) -> Option<&'a str> {
-        if let Some(item) = self.get_item(id) {
-            return item.mod_name.as_deref();
+    pub fn recipe_count_by_type(&self, type_id: &str) -> Result<usize> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM recipe WHERE recipe_type_id = ?",
+            params![type_id],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+}
+
+fn nonempty(s: String) -> Option<String> {
+    if s.is_empty() { None } else { Some(s) }
+}
+
+// ===== Database builder =====
+
+pub fn build_db(script_path: &str, db_path: &str, on_progress: impl Fn(u64)) -> Result<()> {
+    use std::io::{BufRead, BufReader};
+
+    let conn = Connection::open(db_path)?;
+    conn.execute_batch(
+        "PRAGMA synchronous=OFF; PRAGMA journal_mode=OFF; PRAGMA foreign_keys=OFF;",
+    )?;
+
+    let file = std::fs::File::open(script_path)?;
+    let reader = BufReader::with_capacity(1 << 20, file);
+
+    let mut line_count = 0u64;
+    let mut batch = String::with_capacity(512 * 1024);
+    let mut batch_len = 0usize;
+
+    for line in reader.lines() {
+        let line = line?;
+        line_count += 1;
+        if line_count % 100_000 == 0 {
+            on_progress(line_count);
         }
-        if let Some(fluid) = self.get_fluid(id) {
-            return fluid.mod_name.as_deref();
+
+        if let Some(sql) = transform_line(&line) {
+            batch.push_str(&sql);
+            batch.push(';');
+            batch.push('\n');
+            batch_len += 1;
+            if batch_len >= 1000 {
+                conn.execute_batch(&batch)?;
+                batch.clear();
+                batch_len = 0;
+            }
         }
-        None
+    }
+    if !batch.is_empty() {
+        conn.execute_batch(&batch)?;
     }
 
-    pub fn summary(&self) -> String {
-        format!(
-            "items={} fluids={} ore_dicts={} recipe_types={} recipes={}",
-            self.items.len(),
-            self.fluids.len(),
-            self.ore_dicts.len(),
-            self.recipe_types.len(),
-            self.recipes.len(),
+    // Additional indexes beyond what HSQLDB defined
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_recipe_item_out ON recipe_item_outputs(item_outputs_value_item_id);
+         CREATE INDEX IF NOT EXISTS idx_recipe_fluid_out ON recipe_fluid_outputs(fluid_outputs_value_fluid_id);
+         CREATE INDEX IF NOT EXISTS idx_gtr_recipe ON greg_tech_recipe(recipe_id);
+         CREATE INDEX IF NOT EXISTS idx_gtrm_gtr ON greg_tech_recipe_metadata(greg_tech_recipe_id);
+         CREATE INDEX IF NOT EXISTS idx_igs_group ON item_group_item_stacks(item_group_id);
+         CREATE INDEX IF NOT EXISTS idx_rig_recipe ON recipe_item_group(recipe_id);
+         CREATE INDEX IF NOT EXISTS idx_rfg_recipe ON recipe_fluid_group(recipe_id);
+         CREATE INDEX IF NOT EXISTS idx_od_group ON ore_dictionary(item_group_id);",
+    )?;
+
+    on_progress(line_count);
+    Ok(())
+}
+
+fn transform_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    // Skip HSQLDB-specific non-SQL statements and internal system rows
+    if line.starts_with("SET ")
+        || line.starts_with("ALTER USER")
+        || line.starts_with("CREATE USER")
+        || line.starts_with("CREATE SCHEMA")
+        || line.starts_with("GRANT ")
+        || line.starts_with("ALTER SEQUENCE")
+        || line.starts_with("ALTER TABLE")
+        || line.starts_with("INSERT INTO BLOCKS ")
+    {
+        return None;
+    }
+
+    let s = if line.starts_with("CREATE MEMORY TABLE PUBLIC.") {
+        line.replacen(
+            "CREATE MEMORY TABLE PUBLIC.",
+            "CREATE TABLE IF NOT EXISTS ",
+            1,
         )
+    } else if line.starts_with("CREATE INDEX") {
+        line.replacen("CREATE INDEX", "CREATE INDEX IF NOT EXISTS", 1)
+            .replace(" ON PUBLIC.", " ON ")
+    } else if line.starts_with("INSERT INTO PUBLIC.") {
+        line.replacen("INSERT INTO PUBLIC.", "INSERT INTO ", 1)
+    } else {
+        line.to_string()
+    };
+
+    // Strip any remaining PUBLIC. references (e.g. in REFERENCES clauses)
+    let s = s.replace("PUBLIC.", "");
+    Some(decode_unicode_escapes(&s))
+}
+
+fn decode_unicode_escapes(s: &str) -> String {
+    if !s.contains("\\u") {
+        return s.to_string();
     }
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\'
+            && i + 5 <= b.len()
+            && b[i + 1] == b'u'
+            && b[i + 2..i + 6].iter().all(|x| x.is_ascii_hexdigit())
+        {
+            let hex = std::str::from_utf8(&b[i + 2..i + 6]).unwrap();
+            if let Some(c) = u32::from_str_radix(hex, 16).ok().and_then(char::from_u32) {
+                out.push(c);
+                i += 6;
+                continue;
+            }
+        }
+        // HSQLDB escapes all non-ASCII as \uXXXX, so remaining bytes are ASCII
+        out.push(b[i] as char);
+        i += 1;
+    }
+    out
 }
