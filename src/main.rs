@@ -15,6 +15,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Include Canner and Recycler recipes (hidden by default)
+    #[arg(long, global = true)]
+    all_recipes: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -122,6 +126,20 @@ fn from_db_id(id: &str) -> String {
 
 // ===== Helpers =====
 
+/// Strip Minecraft §X color/formatting codes from a string.
+fn strip_mc_fmt(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '§' {
+            chars.next(); // skip the format code character
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn fmt_eu(eu: i64) -> String {
     if eu >= 1_000_000_000 {
         format!("{:.2}G EU", eu as f64 / 1e9)
@@ -141,6 +159,26 @@ fn fmt_duration(ticks: i32) -> String {
     } else {
         format!("{:.1}s", secs)
     }
+}
+
+fn is_canning_or_recycling(recipe: &Recipe) -> bool {
+    if matches!(
+        recipe.recipe_type_name.as_deref(),
+        Some(n) if n.starts_with("Canner ")
+                || n.starts_with("Fluid Canner ")
+                || n.starts_with("Recycler ")
+    ) {
+        return true;
+    }
+    recipe
+        .gt_recipe
+        .as_ref()
+        .map(|gt| {
+            gt.metadata
+                .iter()
+                .any(|m| m.key == "recycle" && m.value == 1)
+        })
+        .unwrap_or(false)
 }
 
 fn eu_per_output(gt: &GtRecipe, output_amount: i32) -> i64 {
@@ -404,6 +442,13 @@ fn main() -> Result<()> {
             if let Some(nbt) = &item.nbt {
                 println!("  nbt:           {}", nbt);
             }
+            if let Some(tip) = &item.tooltip {
+                let clean = strip_mc_fmt(tip);
+                println!("  tooltip:");
+                for line in clean.lines() {
+                    println!("    {line}");
+                }
+            }
             if let Some(c) = &item.container {
                 let fname = c
                     .fluid_id
@@ -453,6 +498,13 @@ fn main() -> Result<()> {
             let db_id = to_db_id(id);
             let name = repo.name_of(&db_id)?;
             let mut recipes = repo.recipes_producing(&db_id)?;
+            let hidden = if !cli.all_recipes {
+                let before = recipes.len();
+                recipes.retain(|r| !is_canning_or_recycling(r));
+                before - recipes.len()
+            } else {
+                0
+            };
             recipes.sort_by_key(|r| sort_key(r, &db_id, sort));
             let total = recipes.len();
             let shown: Vec<_> = recipes
@@ -465,7 +517,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             println!(
-                "{} recipes producing \"{}\" [{}]{}",
+                "{} recipes producing \"{}\" [{}]{}{}",
                 total,
                 name,
                 from_db_id(&db_id),
@@ -473,7 +525,12 @@ fn main() -> Result<()> {
                     format!("  (showing {})", shown.len())
                 } else {
                     String::new()
-                }
+                },
+                if hidden > 0 {
+                    format!("  ({hidden} canner/recycler hidden, use --all-recipes to show)")
+                } else {
+                    String::new()
+                },
             );
             print_recipe_list(&repo, &shown, &db_id, sort);
         }
@@ -482,6 +539,13 @@ fn main() -> Result<()> {
             let db_id = to_db_id(id);
             let name = repo.name_of(&db_id)?;
             let mut recipes = repo.recipes_consuming(&db_id)?;
+            let hidden = if !cli.all_recipes {
+                let before = recipes.len();
+                recipes.retain(|r| !is_canning_or_recycling(r));
+                before - recipes.len()
+            } else {
+                0
+            };
             recipes.sort_by_key(|r| sort_key(r, &db_id, sort));
             let total = recipes.len();
             let shown: Vec<_> = recipes
@@ -494,7 +558,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             println!(
-                "{} recipes consuming \"{}\" [{}]{}",
+                "{} recipes consuming \"{}\" [{}]{}{}",
                 total,
                 name,
                 from_db_id(&db_id),
@@ -502,7 +566,12 @@ fn main() -> Result<()> {
                     format!("  (showing {})", shown.len())
                 } else {
                     String::new()
-                }
+                },
+                if hidden > 0 {
+                    format!("  ({hidden} canner/recycler hidden, use --all-recipes to show)")
+                } else {
+                    String::new()
+                },
             );
             print_recipe_list(&repo, &shown, &db_id, sort);
         }

@@ -3,8 +3,8 @@
 ## Running the CLI
 
 ```bash
-./gtnh <subcommand> [args]          # query data.bin in the current directory
-./gtnh --data /path/to/data.bin ... # use a different data file
+./gtnh <subcommand> [args]          # query gtnh.db in the current directory
+./gtnh --data /path/to/gtnh.db ...  # use a different database file
 ./gtnh --json <subcommand> ...      # emit JSON instead of human-readable text
 ```
 
@@ -16,6 +16,15 @@ cargo build --release && \cp -u target/release/gtnh .
 ---
 
 ## Subcommands
+
+### `build-db [script] [--output <path>]`
+Convert `nesql-db.script` (HSQLDB dump) into `gtnh.db`. Only needed once (or after the
+script is updated). Defaults: script=`nesql-db.script`, output=`gtnh.db`.
+
+```bash
+./gtnh build-db
+./gtnh build-db /path/to/nesql-db.script --output /path/to/gtnh.db
+```
 
 ### `search <query>`
 Case-insensitive substring search across item name, id, and internal name — and the same
@@ -49,18 +58,22 @@ what machine types exist before querying them.
 
 ### `recipes-for <id>`
 All recipes that **produce** the given item or fluid.
+Canner, Recycler, and `recycle=1` metadata recipes are hidden by default; pass `--all-recipes` to include them.
 
 ```bash
 ./gtnh recipes-for "i:gregtech:gt.rodNaquadah32:0"
 ./gtnh recipes-for "f:bartworks:naquadah based liquid fuel mki"
+./gtnh --all-recipes recipes-for "f:bartworks:naquadah based liquid fuel mki"
 ```
 
 ### `recipes-using <id>`
 All recipes that **consume** the given item, fluid, or ore dict as an input.
+Canner, Recycler, and `recycle=1` metadata recipes are hidden by default; pass `--all-recipes` to include them.
 
 ```bash
 ./gtnh recipes-using "i:GoodGenerator:highDensityPlutonium:0"
 ./gtnh recipes-using "o:ingotNaquadah"          # ore dict prefix: o:
+./gtnh --all-recipes recipes-using "o:ingotNaquadah"
 ```
 
 ### `recipe <id>`
@@ -71,12 +84,16 @@ Full detail for a single recipe by its recipe id (the `r~...` hash shown in othe
 ```
 
 ### `recipes-of-type <type-name>`
-All recipes of a given recipe type. The name must match exactly (copy from `recipe-types`
-output). Default limit 20; use `--limit 0` for all.
+All recipes of a given recipe type. Default limit 20; use `--limit 0` for all.
+
+The name can be an exact match **or** a prefix that omits the tier suffix — e.g. `"Scanner"`
+matches `"Scanner (LV)"`, `"Scanner (MV)"`, etc. Copy exact names from `recipe-types` output
+when you need a specific tier only.
 
 ```bash
 ./gtnh recipes-of-type "Large Naquadah Reactor" --limit 0
 ./gtnh recipes-of-type "Gas Turbine Fuel" --sort fuel
+./gtnh recipes-of-type "Scanner" --limit 0      # all tiers
 ```
 
 ### Sort options (`--sort`)
@@ -124,7 +141,7 @@ in Meta. Sort with `--sort fuel` to rank by energy density.
 | `fuel_value` | Energy per item for generator fuels (not in EU directly — conversion depends on the generator) |
 | `fuel_type` | Generator family (0 = diesel/combustion, 1 = gas turbine, 5 = magic absorber, …) |
 | `lftr_output_power` | EU/t output of the LFTR while this fuel is loaded |
-| `lng_basic_output` | Total EU emitted per fuel cycle in the Large Naquadah Reactor; divide by `duration_ticks` to get EU/t |
+| `lng_basic_output` | Base EU/t output of the Large Naquadah Reactor while this fuel is loaded |
 | `sparge_max_byproduct` | LFTR Gas Sparging — max byproduct items per operation |
 | `nke_range` | Neutron Activator — required neutron flux range |
 | `precise_assembler_casing_tier` | Precise Assembler — required casing tier |
@@ -143,6 +160,36 @@ EU/t per amp: ULV=8, LV=32, MV=128, HV=512, EV=2048, IV=8192, LuV=32768, ZPM=131
 UV=524288, UHV=2097152.
 
 The `voltage_tier` field on `GtRecipe` is this index. `voltage` is the raw EU/t value.
+
+---
+
+## Recipe Tiers and Overclock
+
+When determining what tier a machine can first be crafted, **look at the recipe's voltage
+tier**, not just the component names.
+
+- The recipe tier tells you what machine is actually required to run it.
+- Multiblock machines (EBF, Assembler, Precise Assembler, etc.) can overclock: they can
+  run recipes **one tier higher** than their energy hatch. This means a machine with an
+  IV-tier energy hatch can run LuV recipes, an LuV hatch can run ZPM recipes, etc.
+- **Exception**: some multiblocks explicitly forbid overclocking up. Check the controller
+  block's tooltip for wording like *"can only run recipes matching [X] energy hatch tier"*.
+  The Precise Assembler is a known example — `precise_assembler_casing_tier` metadata on
+  its recipes enforces a hard tier match.
+
+**Practical example:**
+- UV Machine Hull has a recipe at UV tier in the Assembler.
+- An EBF running with an IV energy hatch can overclock to LuV recipes — but the Assembler
+  is not the EBF. Check each multiblock individually.
+- Naquadah Alloy (needed for UV hull) is an EBF recipe at LuV tier. An EBF with an IV
+  energy hatch can overclock to run LuV recipes, so UV hull is reachable at IV tier.
+
+**Workflow for "what tier can I first craft X":**
+1. `recipes-for <id>` — find all production recipes and note their `[TIER]`.
+2. For each recipe, identify the machine type (from the recipe type name).
+3. Subtract one tier if the machine is a multiblock that allows overclocking, unless the
+   tooltip/metadata says otherwise.
+4. The minimum input tier is the earliest you can satisfy all recipe inputs recursively.
 
 ---
 
@@ -187,9 +234,9 @@ not stored), some BartWorks LNR fuel production chains.
 
 | File | Contents |
 |------|----------|
-| `src/lib.rs` | `Repository`, all entity structs (`Item`, `Fluid`, `Recipe`, `GtRecipe`, …), binary parser (`RawReader`), search/query methods |
+| `src/lib.rs` | `Repository`, all entity structs (`Item`, `Fluid`, `Recipe`, `GtRecipe`, …), SQLite queries, `build_db` |
 | `src/main.rs` | CLI (`clap` derive), display formatting, sort helpers |
-| `data.bin` | Gzip-compressed binary — do not edit |
+| `gtnh.db` | SQLite database built from `nesql-db.script` via `build-db` subcommand |
 
 ## Infinite resource sources
 In order of best to worst (written as currently available in ZPM):

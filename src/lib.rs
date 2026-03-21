@@ -565,13 +565,15 @@ impl Repository {
     }
 
     pub fn recipes_by_type(&self, type_name: &str) -> Result<Vec<Recipe>> {
+        // Match exact name OR "Name (Tier)" variants (e.g. "Scanner" → "Scanner (LV)")
+        let like_pattern = format!("{type_name} (%)");
         let mut stmt = self.conn.prepare_cached(
             "SELECT r.id FROM recipe r
              JOIN recipe_type rt ON rt.id = r.recipe_type_id
-             WHERE rt.type = ?",
+             WHERE rt.type = ? OR rt.type LIKE ?",
         )?;
         let ids: Vec<String> = stmt
-            .query_map(params![type_name], |r| r.get(0))?
+            .query_map(params![type_name, like_pattern], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         self.fetch_recipes_by_ids(ids)
     }
