@@ -93,10 +93,7 @@ const VOLTAGE_TIERS: &[&str] = &[
 ];
 
 fn tier_name(tier: i32) -> &'static str {
-    VOLTAGE_TIERS
-        .get(tier as usize)
-        .copied()
-        .unwrap_or("???")
+    VOLTAGE_TIERS.get(tier as usize).copied().unwrap_or("???")
 }
 
 fn fmt_eu(eu: i64) -> String {
@@ -300,22 +297,33 @@ fn main() -> Result<()> {
     let repo = Repository::from_file(&cli.data)?;
 
     match &cli.command {
-        Command::Search { query, limit, tooltip } => {
-            let items = repo.search_items(query, *tooltip);
-            let fluids = repo.search_fluids(query, *tooltip);
+        Command::Search {
+            query,
+            limit,
+            tooltip,
+        } => {
+            let items = repo.search_items(query, *tooltip, Some(*limit));
+            let fluids = repo.search_fluids(query, *tooltip, Some(*limit));
 
             if cli.json {
-                let shown_items: Vec<_> = items.iter().take(*limit).collect();
-                let shown_fluids: Vec<_> = fluids.iter().take(*limit).collect();
                 println!(
                     "{}",
-                    serde_json::json!({ "items": shown_items, "fluids": shown_fluids })
+                    serde_json::json!({ "items": items, "fluids": fluids })
                 );
                 return Ok(());
             }
 
-            println!("Items ({} of {}):", items.len().min(*limit), items.len());
-            for item in items.iter().take(*limit) {
+            let items_truncated = items.len() == *limit;
+            println!(
+                "Items ({} of {}):",
+                items.len(),
+                if items_truncated {
+                    format!("{}+", items.len())
+                } else {
+                    items.len().to_string()
+                }
+            );
+            for item in &items {
                 println!(
                     "  {:<50}  {}  [{}]",
                     item.name.as_deref().unwrap_or("?"),
@@ -323,12 +331,21 @@ fn main() -> Result<()> {
                     item.id,
                 );
             }
-            if items.len() > *limit {
-                println!("  … and {} more", items.len() - limit);
+            if items_truncated {
+                println!("  … use --limit to see more");
             }
 
-            println!("\nFluids ({} of {}):", fluids.len().min(*limit), fluids.len());
-            for fluid in fluids.iter().take(*limit) {
+            let fluids_truncated = fluids.len() == *limit;
+            println!(
+                "\nFluids ({} of {}):",
+                fluids.len(),
+                if fluids_truncated {
+                    format!("{}+", fluids.len())
+                } else {
+                    fluids.len().to_string()
+                }
+            );
+            for fluid in &fluids {
                 println!(
                     "  {:<50}  {}  [{}]",
                     fluid.name.as_deref().unwrap_or("?"),
@@ -336,8 +353,8 @@ fn main() -> Result<()> {
                     fluid.id,
                 );
             }
-            if fluids.len() > *limit {
-                println!("  … and {} more", fluids.len() - limit);
+            if fluids_truncated {
+                println!("  … use --limit to see more");
             }
         }
 
@@ -351,7 +368,10 @@ fn main() -> Result<()> {
             }
             println!("{}", item.name.as_deref().unwrap_or("?"));
             println!("  id:            {}", item.id);
-            println!("  mod:           {}", item.mod_name.as_deref().unwrap_or("?"));
+            println!(
+                "  mod:           {}",
+                item.mod_name.as_deref().unwrap_or("?")
+            );
             println!(
                 "  internal name: {}",
                 item.internal_name.as_deref().unwrap_or("?")
@@ -364,7 +384,10 @@ fn main() -> Result<()> {
             if let Some(c) = &item.container {
                 println!(
                     "  container of:  {}  ({}mB)",
-                    c.fluid_id.as_deref().map(|id| repo.name_of(id)).unwrap_or("?"),
+                    c.fluid_id
+                        .as_deref()
+                        .map(|id| repo.name_of(id))
+                        .unwrap_or("?"),
                     c.amount
                 );
             }
@@ -385,7 +408,10 @@ fn main() -> Result<()> {
             }
             println!("{}", fluid.name.as_deref().unwrap_or("?"));
             println!("  id:            {}", fluid.id);
-            println!("  mod:           {}", fluid.mod_name.as_deref().unwrap_or("?"));
+            println!(
+                "  mod:           {}",
+                fluid.mod_name.as_deref().unwrap_or("?")
+            );
             println!(
                 "  internal name: {}",
                 fluid.internal_name.as_deref().unwrap_or("?")
@@ -403,7 +429,9 @@ fn main() -> Result<()> {
             if let Some(f) = filter {
                 let f = f.to_lowercase();
                 types.retain(|rt| {
-                    rt.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&f))
+                    rt.name
+                        .as_deref()
+                        .is_some_and(|n| n.to_lowercase().contains(&f))
                         || rt
                             .category
                             .as_deref()
@@ -419,9 +447,7 @@ fn main() -> Result<()> {
 
             println!("{} recipe types:", types.len());
             for rt in &types {
-                let recipe_count = repo
-                    .recipes_by_type(rt.name.as_deref().unwrap_or(""))
-                    .len();
+                let recipe_count = repo.recipes_by_type(rt.name.as_deref().unwrap_or("")).len();
                 println!(
                     "  {:<45}  {:>5} recipes  [{}]",
                     rt.name.as_deref().unwrap_or("?"),

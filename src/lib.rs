@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -147,8 +147,17 @@ impl RawReader {
 
     fn parse_item(&self, base: usize) -> Item {
         let id = self.str_indirect(base, 4).unwrap_or_default();
-        let (name, mod_name, internal_name, icon_id, tooltip, unlocalized_name, nbt, production, consumption) =
-            self.parse_goods_common(base);
+        let (
+            name,
+            mod_name,
+            internal_name,
+            icon_id,
+            tooltip,
+            unlocalized_name,
+            nbt,
+            production,
+            consumption,
+        ) = self.parse_goods_common(base);
         let stack_size = self.i32_at(base + 15);
         let damage = self.i32_at(base + 16);
         let container_ptr = self.i32_at(base + 17);
@@ -184,8 +193,17 @@ impl RawReader {
 
     fn parse_fluid(&self, base: usize) -> Fluid {
         let id = self.str_indirect(base, 4).unwrap_or_default();
-        let (name, mod_name, internal_name, icon_id, tooltip, unlocalized_name, nbt, production, consumption) =
-            self.parse_goods_common(base);
+        let (
+            name,
+            mod_name,
+            internal_name,
+            icon_id,
+            tooltip,
+            unlocalized_name,
+            nbt,
+            production,
+            consumption,
+        ) = self.parse_goods_common(base);
         let is_gas = self.i32_at(base + 15) == 1;
         Fluid {
             id,
@@ -422,7 +440,10 @@ impl RecipeIoType {
     }
 
     pub fn is_input(self) -> bool {
-        matches!(self, Self::ItemInput | Self::OreDictInput | Self::FluidInput)
+        matches!(
+            self,
+            Self::ItemInput | Self::OreDictInput | Self::FluidInput
+        )
     }
 
     pub fn is_output(self) -> bool {
@@ -506,7 +527,10 @@ impl Repository {
         // offset 6 = service slice (not used here)
         let remap_ptrs = r.slice_at(r.i32_at(7));
 
-        let items: Vec<Item> = item_ptrs.iter().map(|&p| r.parse_item(p as usize)).collect();
+        let items: Vec<Item> = item_ptrs
+            .iter()
+            .map(|&p| r.parse_item(p as usize))
+            .collect();
         let fluids: Vec<Fluid> = fluid_ptrs
             .iter()
             .map(|&p| r.parse_fluid(p as usize))
@@ -592,44 +616,67 @@ impl Repository {
 
     /// Find items whose name, id, or internal name contains `query` (case-insensitive).
     /// If `tooltip` is true, also searches the tooltip field.
-    pub fn search_items<'a>(&'a self, query: &str, tooltip: bool) -> Vec<&'a Item> {
+    /// If `limit` is `Some(n)`, returns at most `n` results and stops early once reached.
+    /// If `limit` is `None`, searches in parallel and returns all matches.
+    pub fn search_items<'a>(
+        &'a self,
+        query: &str,
+        tooltip: bool,
+        limit: Option<usize>,
+    ) -> Vec<&'a Item> {
         let q = query.to_lowercase();
-        self.items
-            .par_iter()
-            .filter(|item| {
-                item.id.to_lowercase().contains(&q)
-                    || item.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&q))
-                    || item
-                        .internal_name
+        let pred = |item: &&Item| {
+            item.id.to_lowercase().contains(&q)
+                || item
+                    .name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().contains(&q))
+                || item
+                    .internal_name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().contains(&q))
+                || (tooltip
+                    && item
+                        .tooltip
                         .as_deref()
-                        .is_some_and(|n| n.to_lowercase().contains(&q))
-                    || (tooltip
-                        && item
-                            .tooltip
-                            .as_deref()
-                            .is_some_and(|n| n.to_lowercase().contains(&q)))
-            })
-            .collect()
+                        .is_some_and(|n| n.to_lowercase().contains(&q)))
+        };
+        if let Some(n) = limit {
+            self.items.iter().filter(pred).take(n).collect()
+        } else {
+            self.items.par_iter().filter(pred).collect()
+        }
     }
 
     /// Find fluids whose name, id, or internal name contains `query` (case-insensitive).
     /// If `tooltip` is true, also searches the tooltip field.
-    pub fn search_fluids<'a>(&'a self, query: &str, tooltip: bool) -> Vec<&'a Fluid> {
+    /// If `limit` is `Some(n)`, returns at most `n` results and stops early once reached.
+    /// If `limit` is `None`, searches in parallel and returns all matches.
+    pub fn search_fluids<'a>(
+        &'a self,
+        query: &str,
+        tooltip: bool,
+        limit: Option<usize>,
+    ) -> Vec<&'a Fluid> {
         let q = query.to_lowercase();
-        self.fluids
-            .par_iter()
-            .filter(|f| {
-                f.id.to_lowercase().contains(&q)
-                    || f.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&q))
-                    || f.internal_name
+        let pred = |f: &&Fluid| {
+            f.id.to_lowercase().contains(&q)
+                || f.name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().contains(&q))
+                || f.internal_name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().contains(&q))
+                || (tooltip
+                    && f.tooltip
                         .as_deref()
-                        .is_some_and(|n| n.to_lowercase().contains(&q))
-                    || (tooltip
-                        && f.tooltip
-                            .as_deref()
-                            .is_some_and(|n| n.to_lowercase().contains(&q)))
-            })
-            .collect()
+                        .is_some_and(|n| n.to_lowercase().contains(&q)))
+        };
+        if let Some(n) = limit {
+            self.fluids.iter().filter(pred).take(n).collect()
+        } else {
+            self.fluids.par_iter().filter(pred).collect()
+        }
     }
 
     /// All recipes that output the given item or fluid id.
@@ -637,9 +684,8 @@ impl Repository {
         self.recipes
             .iter()
             .filter(|r| {
-                r.io.iter().any(|io| {
-                    io.io_type.is_output() && io.goods_id.as_deref() == Some(goods_id)
-                })
+                r.io.iter()
+                    .any(|io| io.io_type.is_output() && io.goods_id.as_deref() == Some(goods_id))
             })
             .collect()
     }
@@ -649,9 +695,8 @@ impl Repository {
         self.recipes
             .iter()
             .filter(|r| {
-                r.io.iter().any(|io| {
-                    io.io_type.is_input() && io.goods_id.as_deref() == Some(goods_id)
-                })
+                r.io.iter()
+                    .any(|io| io.io_type.is_input() && io.goods_id.as_deref() == Some(goods_id))
             })
             .collect()
     }
