@@ -1,108 +1,41 @@
 # GTNH Repository — Agent Guide
 
-## Running the CLI
+## CLI Usage
 
 ```bash
-./gtnh <subcommand> [args]          # query nesql.db in the current directory
-./gtnh --data /path/to/nesql.db ...  # use a different database file
-./gtnh --json <subcommand> ...      # emit JSON instead of human-readable text
+./gtnh <subcommand> [args]           # queries nesql.db
+./gtnh --data /path/to/nesql.db ...  # alternate db
+./gtnh --json <subcommand> ...       # JSON output (pipe to jq)
+./gtnh --dot <subcommand> ...        # Graphviz DOT (eu-cost, uu-cost)
+./gtnh --all-recipes <subcommand>    # include Recycler + recycle=1 recipes
 ```
 
-After editing `src/main.rs` or `src/lib.rs`, rebuild:
-```bash
-cargo build --release && \cp -u target/release/gtnh .
-```
+Rebuild after editing source: `cargo build --release && \cp -u target/release/gtnh .`
 
 ---
 
 ## Subcommands
 
-### `build-db [script] [--output <path>]`
-*(Legacy)* Convert `nesql-db.script` (HSQLDB dump) into a SQLite database.
-The exporter now writes directly to `nesql.db`, so this is rarely needed.
-Defaults: script=`nesql-db.script`, output=`nesql.db`.
+| Command | Description |
+|---------|-------------|
+| `build-db [script] [-o path]` | *(Legacy)* Convert `nesql-db.script` → `nesql.db` |
+| `search <query>` | Substring search items+fluids by name/id. Flags: `--tooltip`/`-t`, `--regex`/`-r`, `--limit N` |
+| `item <id>` / `fluid <id>` | Details for one item or fluid |
+| `recipe-types [--filter <str>]` | List recipe type names with counts |
+| `recipes-for <id>` | Recipes that produce the item/fluid |
+| `recipes-using <id>` | Recipes that consume the item/fluid/ore-dict |
+| `recipe <id>` | Full detail for one recipe by `r~` hash |
+| `recipes-of-type <name>` | All recipes of a type. Name can be prefix (matches all tiers). Default limit 20 |
+| `eu-cost <id>` | Min EU cost to produce 1 unit, tracing full chain to free inputs |
+| `uu-cost <id>` | Min UU-Matter cost to produce 1 unit |
 
-```bash
-./gtnh build-db
-./gtnh build-db /path/to/nesql-db.script --output /path/to/nesql.db
-```
+**`--sort`** (on `recipes-for`, `recipes-using`, `recipes-of-type`): `eu` (default), `time`, `inputs`, `fuel`
 
-### `search <query>`
-Case-insensitive substring search across item name, id, and internal name — and the same
-for fluids. Returns both item and fluid matches. Search runs in parallel.
+**`search --regex`/`-r`**: case-insensitive regex — supports `|` for OR, `.*` for wildcards.
 
-```bash
-./gtnh search "naquadah"
-./gtnh search "naquadah" --limit 5
-./gtnh search "produces oxygen" --tooltip      # also searches tooltip text
-./gtnh search "produces oxygen" -t             # short form
-```
+**`eu-cost` flags**: `--depth N` (default 3), `--peak-tier` (single-line tier output), `--why` (diagnose blocked paths)
 
-Use `search` first to discover the exact id of an item or fluid before using other commands.
-
-### `item <id>` / `fluid <id>`
-Show details (name, mod, stack size, recipe counts) for a single item or fluid by id.
-
-```bash
-./gtnh item "i:gregtech:gt.blockmachines:1189"
-./gtnh fluid "f:bartworks:naquadah based liquid fuel mki"
-```
-
-### `recipe-types [--filter <substring>]`
-List all recipe type names with recipe counts and mod category. Useful for discovering
-what machine types exist before querying them.
-
-```bash
-./gtnh recipe-types
-./gtnh recipe-types --filter nuclear
-```
-
-### `recipes-for <id>`
-All recipes that **produce** the given item or fluid.
-Canner, Recycler, and `recycle=1` metadata recipes are hidden by default; pass `--all-recipes` to include them.
-
-```bash
-./gtnh recipes-for "i:gregtech:gt.rodNaquadah32:0"
-./gtnh recipes-for "f:bartworks:naquadah based liquid fuel mki"
-./gtnh --all-recipes recipes-for "f:bartworks:naquadah based liquid fuel mki"
-```
-
-### `recipes-using <id>`
-All recipes that **consume** the given item, fluid, or ore dict as an input.
-Canner, Recycler, and `recycle=1` metadata recipes are hidden by default; pass `--all-recipes` to include them.
-
-```bash
-./gtnh recipes-using "i:GoodGenerator:highDensityPlutonium:0"
-./gtnh recipes-using "o:ingotNaquadah"          # ore dict prefix: o:
-./gtnh --all-recipes recipes-using "o:ingotNaquadah"
-```
-
-### `recipe <id>`
-Full detail for a single recipe by its recipe id (the `r~...` hash shown in other outputs).
-
-```bash
-./gtnh recipe "r~thLHqSL-PayH7mBL1s4WeA=="
-```
-
-### `recipes-of-type <type-name>`
-All recipes of a given recipe type. Default limit 20; use `--limit 0` for all.
-
-The name can be an exact match **or** a prefix that omits the tier suffix — e.g. `"Scanner"`
-matches `"Scanner (LV)"`, `"Scanner (MV)"`, etc. Copy exact names from `recipe-types` output
-when you need a specific tier only.
-
-```bash
-./gtnh recipes-of-type "Large Naquadah Reactor" --limit 0
-./gtnh recipes-of-type "Gas Turbine Fuel" --sort fuel
-./gtnh recipes-of-type "Scanner" --limit 0      # all tiers
-```
-
-### Sort options (`--sort`)
-Available on `recipes-for`, `recipes-using`, and `recipes-of-type`:
-- `eu` (default) — EU per output unit, ascending (best efficiency first)
-- `time` — duration in ticks, ascending (fastest first)
-- `inputs` — number of distinct inputs, ascending (simplest first)
-- `fuel` — `fuel_value` metadata, descending (highest energy density first)
+**`uu-cost` flags**: `--depth N` (default 3)
 
 ---
 
@@ -111,12 +44,9 @@ Available on `recipes-for`, `recipes-using`, and `recipes-of-type`:
 | Prefix | Example | Meaning |
 |--------|---------|---------|
 | `i:` | `i:gregtech:gt.blockmachines:1189` | Item (`mod:internalName:damage`) |
-| `f:` | `f:bartworks:naquadah based liquid fuel mki` | Fluid (usually lowercase) |
+| `f:` | `f:bartworks:naquadah based liquid fuel mki` | Fluid (registry name, lowercase) |
 | `o:` | `o:ingotNaquadah` | Ore dict entry |
 | `r~` | `r~thLHqSL-PayH7mBL1s4WeA==` | Recipe (base64 hash) |
-
-Fluid ids are typically the fluid's registry name in lowercase. Item damage values
-distinguish variants (e.g. `gt.blockmachines:1189` vs `:1190`).
 
 ---
 
@@ -125,139 +55,74 @@ distinguish variants (e.g. `gt.blockmachines:1189` vs `:1190`).
 ```
 #1   [r~<id>]  <RecipeTypeName>  →  <total EU>  (<EU/output>)
   GT:    <voltage> EU/t × <amps>A × <ticks>t = <total> (<duration>)  [<TIER>]
-  Meta:  key=value  key2=value2
-  Inputs:
-       N×  Item Name
-  Outputs:
-       N×  Item Name  (probability%)
+  Meta:  key=value ...
+  Inputs:  N× Item Name
+  Outputs: N× Item Name  (probability%)
 ```
 
-**Fuel recipes** (`voltage=0, duration=0`) skip the GT line and show only `fuel_value=N`
-in Meta. Sort with `--sort fuel` to rank by energy density.
+Fuel recipes (`voltage=0`) omit GT line; show `fuel_value=N` in Meta. Sort with `--sort fuel`.
 
-**Metadata keys encountered in the data:**
-
-| Key | Meaning |
-|-----|---------|
-| `fuel_value` | Energy per item for generator fuels (not in EU directly — conversion depends on the generator) |
-| `fuel_type` | Generator family (0 = diesel/combustion, 1 = gas turbine, 5 = magic absorber, …) |
-| `lftr_output_power` | EU/t output of the LFTR while this fuel is loaded |
-| `lng_basic_output` | Base EU/t output of the Large Naquadah Reactor while this fuel is loaded |
-| `sparge_max_byproduct` | LFTR Gas Sparging — max byproduct items per operation |
-| `nke_range` | Neutron Activator — required neutron flux range |
-| `precise_assembler_casing_tier` | Precise Assembler — required casing tier |
-| `mass` | Radio Hatch — mass value of the material |
+**Metadata keys:** `fuel_value`, `fuel_type` (0=diesel, 1=gas turbine, 5=magic), `lftr_output_power`, `lng_basic_output`, `sparge_max_byproduct`, `nke_range`, `precise_assembler_casing_tier`, `mass`
 
 ---
 
 ## Voltage Tiers
 
-```
-0=ULV   1=LV    2=MV    3=HV    4=EV    5=IV
-6=LuV   7=ZPM   8=UV    9=UHV  10=UEV  11=UIV  12=UMV  13=UXV
-```
+`0=ULV 1=LV 2=MV 3=HV 4=EV 5=IV 6=LuV 7=ZPM 8=UV 9=UHV 10=UEV 11=UIV 12=UMV 13=UXV`
 
-EU/t per amp: ULV=8, LV=32, MV=128, HV=512, EV=2048, IV=8192, LuV=32768, ZPM=131072,
-UV=524288, UHV=2097152.
+EU/t per amp: ULV=8, LV=32, MV=128, HV=512, EV=2048, IV=8192, LuV=32768, ZPM=131072, UV=524288, UHV=2097152.
 
-The `voltage_tier` field on `GtRecipe` is this index. `voltage` is the raw EU/t value.
+`voltage_tier` on `GtRecipe` is the index above; `voltage` is raw EU/t.
 
 ---
 
 ## Recipe Tiers and Overclock
 
-When determining what tier a machine can first be crafted, **look at the recipe's voltage
-tier**, not just the component names.
+Use the recipe's `[TIER]` to determine required machine tier — not component names.
 
-- The recipe tier tells you what machine is actually required to run it.
-- Multiblock machines (EBF, Assembler, Precise Assembler, etc.) can overclock: they can
-  run recipes **one tier higher** than their energy hatch. This means a machine with an
-  IV-tier energy hatch can run LuV recipes, an LuV hatch can run ZPM recipes, etc.
-- **Exception**: some multiblocks explicitly forbid overclocking up. Check the controller
-  block's tooltip for wording like *"can only run recipes matching [X] energy hatch tier"*.
-  The Precise Assembler is a known example — `precise_assembler_casing_tier` metadata on
-  its recipes enforces a hard tier match.
+- Most multiblocks can overclock: run recipes **one tier above** their energy hatch (IV hatch → runs LuV recipes).
+- **Exception**: some multiblocks forbid overclock-up (check tooltip). Precise Assembler enforces `precise_assembler_casing_tier` metadata exactly.
 
-**Practical example:**
-- UV Machine Hull has a recipe at UV tier in the Assembler.
-- An EBF running with an IV energy hatch can overclock to LuV recipes — but the Assembler
-  is not the EBF. Check each multiblock individually.
-- Naquadah Alloy (needed for UV hull) is an EBF recipe at LuV tier. An EBF with an IV
-  energy hatch can overclock to run LuV recipes, so UV hull is reachable at IV tier.
-
-**Workflow for "what tier can I first craft X":**
-1. `recipes-for <id>` — find all production recipes and note their `[TIER]`.
-2. For each recipe, identify the machine type (from the recipe type name).
-3. Subtract one tier if the machine is a multiblock that allows overclocking, unless the
-   tooltip/metadata says otherwise.
-4. The minimum input tier is the earliest you can satisfy all recipe inputs recursively.
+**"What tier can I first craft X":**
+1. `recipes-for <id>` → note `[TIER]` and machine type.
+2. Subtract one tier if the machine is an overclockable multiblock.
+3. Recurse on inputs.
 
 ---
 
-## Common Workflows
+## Minimizing Token Usage
 
-**Find how to make something:**
-```bash
-./gtnh search "item name"            # get the id
-./gtnh recipes-for "<id>"            # production recipes
-```
-
-**Find what something is used in:**
-```bash
-./gtnh recipes-using "<id>"
-```
-
-**Find the best fuel for a generator type:**
-```bash
-./gtnh recipe-types --filter turbine  # find the exact recipe type name
-./gtnh recipes-of-type "Gas Turbine Fuel" --sort fuel
-```
-
-**Trace a full production chain:** run `recipes-for` on each intermediate, working
-backwards from the target.
-
-**Extract precise numeric data for calculations:** use `--json` and pipe to `python3 -c`
-or `jq`. The JSON schema directly mirrors the Rust structs (`GtRecipe`, `RecipeIo`, etc.).
+- **`--limit N`**: always cap recipe lists; default is 20 but use smaller when possible.
+- **`--peak-tier`**: single line instead of full `eu-cost` tree when you only need the tier.
+- **`recipe r~<hash>`**: fetch one recipe by id rather than re-running `recipes-for`.
+- **`--json | jq`**: extract only needed fields — avoid ingesting full output.
+- **Avoid `--limit 0`** on broad types (Assembler, Chemical Reactor = thousands of rows).
+- **`recipe-types --filter`**: confirm name and count before a bulk fetch.
+- **Skip `search`** when you already have the id.
 
 ---
 
 ## Data Scale
 
-115,873 items · 1,542 fluids · 121,352 ore dicts · 2,206 recipe types · 226,374 recipes
+115,873 items · 1,542 fluids · 121,352 ore dicts · 2,206 recipe types · 226,374 recipes · 79 ore veins · 538 bee mutations · 424 mob entries · 3,739 quests.
 
-Also includes: 79 ore veins with dimensions, 55 small ore deposits, 538 bee mutations,
-482 bee product recipes, 424 mob entries with 1,105 drop entries (for EEC planning),
-and quest data (3,739 quests).
+Gaps: IC2 Nuclear Fission EU/t not stored. Planetary Gas Siphon and Bee Products are included.
 
-Some machines/multiblocks have no recipe entry in the data (output computed outside GT
-recipe system). Notable gaps: IC2 Nuclear Fission (EU/t computed by reactor simulation,
-not stored). Planetary Gas Siphon and Bee Products are now included.
+Files: `src/lib.rs` (structs, queries), `src/main.rs` (CLI, formatting), `nesql.db` (SQLite).
 
 ---
 
-## Crate Structure
+## Infinite Resource Sources
+*(ZPM-era, best→worst)*
 
-| File | Contents |
-|------|----------|
-| `src/lib.rs` | `Repository`, all entity structs (`Item`, `Fluid`, `Recipe`, `GtRecipe`, …), SQLite queries, `build_db` |
-| `src/main.rs` | CLI (`clap` derive), display formatting, sort helpers |
-| `nesql.db` | SQLite database exported directly by the NESQL exporter |
-
-## Infinite resource sources
-In order of best to worst (written as currently available in ZPM):
 - Reservoir Hatch (water)
-- Extreme Entity Crusher
-- Ender Tree (endstone and obsidian)
+- Extreme Entity Crusher (mob drops)
+- Ender Tree (endstone, obsidian)
 - Nether Tree (netherrack, nether quartz, soulsand)
 - Air intake hatch (air, nether air)
-- Extreme Industrial Greenhouse (non-IC2 crop)
-  - EIG isn't shown as recipes, see https://wiki.gtnewhorizons.com/wiki/Extreme_Industrial_Greenhouse for some of the recommended seeds
+- Extreme Industrial Greenhouse — non-IC2 crops ([wiki](https://wiki.gtnewhorizons.com/wiki/Extreme_Industrial_Greenhouse))
 - Planetary Gas Siphon
 - Bees
-- Extreme Industrial Greenhouse (IC2 crop)
-  - Use https://wiki.gtnewhorizons.com/wiki/IC2_Crops_List for the list of crops and their drops
+- Extreme Industrial Greenhouse — IC2 crops ([crop list](https://wiki.gtnewhorizons.com/wiki/IC2_Crops_List))
 
-When answering "what is the best way to source X", always enumerate what **each**
-infinite source produces first, then trace those outputs forward to X. Do not filter
-by obvious inputs (water, air) and stop — less obvious sources like EIG crops or EEC
-mob drops may yield far better routes.
+When answering "best way to source X": enumerate what **each** source produces first, then trace forward to X. Do not stop at obvious inputs (water, air) — EIG crops and EEC mob drops may yield better routes.
