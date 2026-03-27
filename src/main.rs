@@ -119,9 +119,13 @@ enum Command {
         /// When no path is found, show why each recipe is blocked (which inputs are unsettled)
         #[arg(long)]
         why: bool,
-        /// Print the peak GT voltage tier across the entire production chain (no display tree)
+        /// Find the path with minimum peak voltage tier (break ties with minimum EU cost)
         #[arg(long)]
-        peak_tier: bool,
+        min_tier: bool,
+        /// Find the minimum EU cost path using only recipes at or below this tier
+        /// (e.g. IV, LuV, ZPM). Incompatible with --min-tier.
+        #[arg(long, value_name = "TIER")]
+        max_tier: Option<String>,
     },
 }
 
@@ -850,6 +854,222 @@ fn run_eu_dijkstra(eu_graph: &EuGraph) -> DijkState {
                     eu, output_amount, ..
                 } = &g[recipe_ni]
                 else {
+                    continue;
+                };
+                let recipe_cost = (*eu as f64 + recipe_input_eu[&recipe_ni]) / *output_amount;
+                for out_edge in g.edges_directed(recipe_ni, Direction::Outgoing) {
+                    if matches!(out_edge.weight(), EuGraphEdge::Output) {
+                        let output_ni = out_edge.target();
+                        if !settled.contains_key(&output_ni) {
+                            pq.push((Reverse(OrdF64(recipe_cost)), output_ni, Some(recipe_ni)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    DijkState {
+        settled,
+        slot_chosen,
+    }
+}
+
+/// Map a voltage tier string to a rank used for ordering.
+/// Empty string (free/synthetic sources) maps to 0.
+fn tier_rank_u8(t: &str) -> u8 {
+    const TIER_ORDER: &[&str] = &[
+        "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
+        "UHV", "UEV", "UIV", "UMV", "UXV",
+    ];
+    TIER_ORDER.iter().position(|&s| s == t).unwrap_or(0) as u8
+}
+
+/// Dijkstra variant that minimises (peak_voltage_tier_rank, eu_cost) lexicographically.
+///
+/// The "cost" of a goods node is (max tier of any recipe in its production chain, total EU).
+/// For a recipe at tier T consuming inputs with costs (t_i, e_i):
+///   output_tier = max(T, max(t_i))
+///   output_eu   = (recipe_eu + Σ amount_i × e_i) / output_amount
+///
+/// Returns a DijkState whose `settled` map stores the EU costs of the min-tier paths,
+/// allowing all existing build_eu_result / print_eu_tree / peak_voltage_tier code to
+/// be reused without modification.
+fn run_min_tier_dijkstra(eu_graph: &EuGraph) -> DijkState {
+    let g = &eu_graph.g;
+    let mut settled: HashMap<NodeIndex, (f64, Option<NodeIndex>)> = HashMap::new();
+    let mut slot_chosen: HashMap<(NodeIndex, usize), NodeIndex> = HashMap::new();
+    let mut remaining_slots: HashMap<NodeIndex, usize> = HashMap::new();
+    let mut recipe_input_eu: HashMap<NodeIndex, f64> = HashMap::new();
+    let mut recipe_input_tier: HashMap<NodeIndex, u8> = HashMap::new();
+
+    // Min-heap: (Reverse((tier_rank, eu_cost)), goods_ni, via_recipe_ni).
+    let mut pq: BinaryHeap<(Reverse<(u8, OrdF64)>, NodeIndex, Option<NodeIndex>)> =
+        BinaryHeap::new();
+
+    for ni in g.node_indices() {
+        if let EuGraphNode::Recipe { num_slots, .. } = &g[ni] {
+            remaining_slots.insert(ni, *num_slots);
+        }
+    }
+
+    // Seed infinite sources at tier 0.
+    for (&ni, &cost) in &eu_graph.seed_costs {
+        pq.push((Reverse((0u8, OrdF64(cost))), ni, None));
+    }
+
+    // Fire zero-input recipes immediately.
+    for ni in g.node_indices() {
+        if let EuGraphNode::Recipe {
+            eu, output_amount, voltage_tier, ..
+        } = &g[ni]
+        {
+            if remaining_slots.get(&ni).copied().unwrap_or(0) == 0 {
+                let recipe_cost_eu = *eu as f64 / *output_amount;
+                let recipe_tier = tier_rank_u8(voltage_tier);
+                for out_edge in g.edges_directed(ni, Direction::Outgoing) {
+                    if matches!(out_edge.weight(), EuGraphEdge::Output) {
+                        pq.push((
+                            Reverse((recipe_tier, OrdF64(recipe_cost_eu))),
+                            out_edge.target(),
+                            Some(ni),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    while let Some((Reverse((tier, OrdF64(cost))), goods_ni, via_recipe)) = pq.pop() {
+        if settled.contains_key(&goods_ni) {
+            continue;
+        }
+        settled.insert(goods_ni, (cost, via_recipe));
+
+        for edge in g.edges_directed(goods_ni, Direction::Outgoing) {
+            let recipe_ni = edge.target();
+            let EuGraphEdge::Input { slot, amount } = *edge.weight() else {
+                continue;
+            };
+
+            if slot_chosen.contains_key(&(recipe_ni, slot)) {
+                continue;
+            }
+            slot_chosen.insert((recipe_ni, slot), goods_ni);
+            *recipe_input_eu.entry(recipe_ni).or_insert(0.0) += amount * cost;
+            // Track the max tier seen across all settled inputs for this recipe.
+            let max_t = recipe_input_tier.entry(recipe_ni).or_insert(0);
+            *max_t = (*max_t).max(tier);
+
+            let rem = remaining_slots.entry(recipe_ni).or_insert(0);
+            if *rem == 0 {
+                continue;
+            }
+            *rem -= 1;
+
+            if *rem == 0 {
+                let EuGraphNode::Recipe {
+                    eu, output_amount, voltage_tier, ..
+                } = &g[recipe_ni]
+                else {
+                    continue;
+                };
+                let recipe_tier = tier_rank_u8(voltage_tier);
+                let output_tier = recipe_tier.max(recipe_input_tier[&recipe_ni]);
+                let output_eu =
+                    (*eu as f64 + recipe_input_eu[&recipe_ni]) / *output_amount;
+                for out_edge in g.edges_directed(recipe_ni, Direction::Outgoing) {
+                    if matches!(out_edge.weight(), EuGraphEdge::Output) {
+                        let output_ni = out_edge.target();
+                        if !settled.contains_key(&output_ni) {
+                            pq.push((
+                                Reverse((output_tier, OrdF64(output_eu))),
+                                output_ni,
+                                Some(recipe_ni),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    DijkState {
+        settled,
+        slot_chosen,
+    }
+}
+
+/// Dijkstra variant that finds minimum EU cost using only recipes at or below `max_tier`.
+///
+/// Recipes with tier_rank_u8(voltage_tier) > max_tier are simply excluded: they are never
+/// added to `remaining_slots`, so their input edges are ignored and they never fire.
+/// Everything else is identical to `run_eu_dijkstra`.
+fn run_max_tier_dijkstra(eu_graph: &EuGraph, max_tier: u8) -> DijkState {
+    let g = &eu_graph.g;
+    let mut settled: HashMap<NodeIndex, (f64, Option<NodeIndex>)> = HashMap::new();
+    let mut slot_chosen: HashMap<(NodeIndex, usize), NodeIndex> = HashMap::new();
+    let mut remaining_slots: HashMap<NodeIndex, usize> = HashMap::new();
+    let mut recipe_input_eu: HashMap<NodeIndex, f64> = HashMap::new();
+
+    let mut pq: BinaryHeap<(Reverse<OrdF64>, NodeIndex, Option<NodeIndex>)> = BinaryHeap::new();
+
+    // Initialise slot counts only for recipes within the tier budget.
+    for ni in g.node_indices() {
+        if let EuGraphNode::Recipe { num_slots, voltage_tier, .. } = &g[ni] {
+            if tier_rank_u8(voltage_tier) <= max_tier {
+                remaining_slots.insert(ni, *num_slots);
+            }
+        }
+    }
+
+    for (&ni, &cost) in &eu_graph.seed_costs {
+        pq.push((Reverse(OrdF64(cost)), ni, None));
+    }
+
+    // Fire zero-input recipes within tier budget immediately.
+    for ni in g.node_indices() {
+        if let EuGraphNode::Recipe { eu, output_amount, .. } = &g[ni] {
+            if remaining_slots.get(&ni).copied().unwrap_or(1) == 0 {
+                let recipe_cost = *eu as f64 / *output_amount;
+                for out_edge in g.edges_directed(ni, Direction::Outgoing) {
+                    if matches!(out_edge.weight(), EuGraphEdge::Output) {
+                        pq.push((Reverse(OrdF64(recipe_cost)), out_edge.target(), Some(ni)));
+                    }
+                }
+            }
+        }
+    }
+
+    while let Some((Reverse(OrdF64(cost)), goods_ni, via_recipe)) = pq.pop() {
+        if settled.contains_key(&goods_ni) {
+            continue;
+        }
+        settled.insert(goods_ni, (cost, via_recipe));
+
+        for edge in g.edges_directed(goods_ni, Direction::Outgoing) {
+            let recipe_ni = edge.target();
+            let EuGraphEdge::Input { slot, amount } = *edge.weight() else {
+                continue;
+            };
+            // Skip recipes that were excluded (above max_tier).
+            if !remaining_slots.contains_key(&recipe_ni) {
+                continue;
+            }
+            if slot_chosen.contains_key(&(recipe_ni, slot)) {
+                continue;
+            }
+            slot_chosen.insert((recipe_ni, slot), goods_ni);
+            *recipe_input_eu.entry(recipe_ni).or_insert(0.0) += amount * cost;
+
+            let rem = remaining_slots.entry(recipe_ni).or_insert(0);
+            if *rem == 0 {
+                continue;
+            }
+            *rem -= 1;
+
+            if *rem == 0 {
+                let EuGraphNode::Recipe { eu, output_amount, .. } = &g[recipe_ni] else {
                     continue;
                 };
                 let recipe_cost = (*eu as f64 + recipe_input_eu[&recipe_ni]) / *output_amount;
@@ -1839,39 +2059,58 @@ fn main() -> Result<()> {
             print_recipe_list(&repo, &shown, dummy, sort);
         }
 
-        Command::EuCost { id, depth, why, peak_tier } => {
+        Command::EuCost { id, depth, why, min_tier, max_tier } => {
             let db_id = to_db_id(id);
             let name = repo.name_of(&db_id)?;
 
-            let cache_path = format!("{}.eucache", cli.data);
-            let (eu_graph, dijk) = if let Some(cached) = load_eu_cache(&cache_path, &cli.data) {
-                eprintln!("Loaded EU cache.");
-                cached
+            // Validate --max-tier if supplied.
+            let max_tier_rank: Option<u8> = if let Some(t) = max_tier {
+                const TIER_ORDER: &[&str] = &[
+                    "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
+                    "UHV", "UEV", "UIV", "UMV", "UXV",
+                ];
+                match TIER_ORDER.iter().position(|&s| s == t.as_str()) {
+                    Some(r) => Some(r as u8),
+                    None => anyhow::bail!(
+                        "Unknown tier \"{t}\". Valid tiers: {}",
+                        TIER_ORDER.join(", ")
+                    ),
+                }
             } else {
-                eprintln!("Building EU cost graph...");
-                let mut g = repo.build_eu_graph()?;
-                eprintln!("Seeding infinite sources...");
-                populate_seed_costs(&mut g, &repo);
-                add_infinite_source_recipes(&mut g);
-                add_eec_recipes(&mut g, &repo);
-                eprintln!("Running Dijkstra...");
-                let d = run_eu_dijkstra(&g);
-                save_eu_cache(&cache_path, &cli.data, &g, &d);
+                None
+            };
+
+            let cache_path = format!("{}.eucache", cli.data);
+            let (eu_graph, dijk) = {
+                // Always load/build the EU graph; the cached DijkState is only reused for
+                // the default (unconstrained min-EU) mode.
+                let (g, cached_dijk) =
+                    if let Some(cached) = load_eu_cache(&cache_path, &cli.data) {
+                        eprintln!("Loaded EU cache.");
+                        cached
+                    } else {
+                        eprintln!("Building EU cost graph...");
+                        let mut g = repo.build_eu_graph()?;
+                        eprintln!("Seeding infinite sources...");
+                        populate_seed_costs(&mut g, &repo);
+                        add_infinite_source_recipes(&mut g);
+                        add_eec_recipes(&mut g, &repo);
+                        eprintln!("Running Dijkstra...");
+                        let d = run_eu_dijkstra(&g);
+                        save_eu_cache(&cache_path, &cli.data, &g, &d);
+                        (g, d)
+                    };
+                let d = if *min_tier {
+                    eprintln!("Running min-tier Dijkstra...");
+                    run_min_tier_dijkstra(&g)
+                } else if let Some(rank) = max_tier_rank {
+                    eprintln!("Running max-tier Dijkstra...");
+                    run_max_tier_dijkstra(&g, rank)
+                } else {
+                    cached_dijk
+                };
                 (g, d)
             };
-            // --peak-tier: just report the max voltage tier across the entire chain.
-            if *peak_tier {
-                let tier = peak_voltage_tier(
-                    &db_id, &eu_graph, &dijk, &mut HashSet::new(),
-                );
-                match tier {
-                    Some(t) => println!("{}", t),
-                    None => eprintln!("No EU cost path found for \"{}\" [{}]",
-                        name, from_db_id(&db_id)),
-                }
-                return Ok(());
-            }
-
             let result = build_eu_result(&db_id, &dijk, &eu_graph, &repo, *depth);
 
             if cli.json {
@@ -1898,7 +2137,14 @@ fn main() -> Result<()> {
                             &db_id, &eu_graph, &dijk, &mut HashSet::new(),
                         );
                         let tier_str = tier.as_deref().unwrap_or("?");
-                        println!("EU cost for \"{}\" [{}]", name, from_db_id(&db_id));
+                        let label = if *min_tier {
+                            "EU cost (min-tier)".to_string()
+                        } else if let Some(t) = max_tier {
+                            format!("EU cost (max-tier: {})", t)
+                        } else {
+                            "EU cost".to_string()
+                        };
+                        println!("{} for \"{}\" [{}]", label, name, from_db_id(&db_id));
                         println!("  Best: {}/unit  [{}]", fmt_eu(r.eu_per_unit as i64), tier_str);
                         print_eu_tree(r, 0, *depth, "");
                     }

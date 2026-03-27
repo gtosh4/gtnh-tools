@@ -33,7 +33,7 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 
 **`search --regex`/`-r`**: case-insensitive regex — supports `|` for OR, `.*` for wildcards.
 
-**`eu-cost` flags**: `--depth N` (default 3), `--peak-tier` (single-line tier output), `--why` (diagnose blocked paths)
+**`eu-cost` flags**: `--depth N` (default 3), `--why` (diagnose blocked paths), `--min-tier` (find lowest peak-tier path; break ties with lowest EU cost)
 
 **`uu-cost` flags**: `--depth N` (default 3)
 
@@ -62,7 +62,7 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 
 Fuel recipes (`voltage=0`) omit GT line; show `fuel_value=N` in Meta. Sort with `--sort fuel`.
 
-**Metadata keys:** `fuel_value`, `fuel_type` (0=diesel, 1=gas turbine, 5=magic), `lftr_output_power`, `lng_basic_output`, `sparge_max_byproduct`, `nke_range`, `precise_assembler_casing_tier`, `mass`
+**Metadata keys:** `fuel_value`, `fuel_type` (0=diesel, 1=gas turbine, 5=magic), `lftr_output_power`, `lng_basic_output`, `sparge_max_byproduct`, `nke_range`, `precise_assembler_casing_tier`, `mass`, `coil_heat` (minimum Kelvin required — EBF and Alloy Blast Smelter)
 
 ---
 
@@ -86,7 +86,31 @@ Use the recipe's `[TIER]` to determine required machine tier — not component n
 **"What tier can I first craft X":**
 1. `recipes-for <id>` → note `[TIER]` and machine type.
 2. Subtract one tier if the machine is an overclockable multiblock.
-3. Recurse on inputs.
+3. If the recipe has `coil_heat` metadata, find the minimum coil meeting that heat and take the max of the recipe tier and that coil's craft tier (see table below).
+4. Recurse on inputs.
+
+**EBF / Alloy Blast Smelter coil requirements** (`coil_heat` metadata key):
+
+| Coil | Heat (K) | Craft tier (full chain) |
+|------|----------|------------------------|
+| Cupronickel | 1,801 | EV |
+| Kanthal | 2,701 | EV |
+| Nichrome | 3,601 | EV |
+| TPV-Alloy | 4,501 | IV |
+| HSS-G | 5,401 | IV |
+| HSS-S | 6,301 | UV |
+| Naquadah | 7,201 | UV |
+| Naquadah Alloy | 8,101 | UEV |
+| Trinium | 9,001 | ZPM (recipe tier; full chain likely higher) |
+| Electrum Flux | 9,901 | UV (recipe tier; full chain likely higher) |
+| Awakened Draconium | 10,801 | UHV (recipe tier) |
+| Infinity | 11,701 | UEV (Assemblyline) |
+| Hypogen | 12,601 | UIV (Assemblyline) |
+| Eternal | 13,501 | UMV (Assemblyline) |
+
+"Craft tier" = peak tier shown in `eu-cost` header when unblocked; `eu-cost --min-tier` gives the lowest-tier reachable path. For Trinium and Electrum Flux the full ingredient chains are partially blocked; treat ZPM/UV as a floor.
+
+For recipes with `coil_heat ≤ 3601` the coil is never the bottleneck (Nichrome is EV, same as most early EBF recipes). For `coil_heat > 3601`, check whether the coil's craft tier exceeds the recipe's voltage tier.
 
 ---
 
