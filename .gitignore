@@ -6,3 +6,4 @@
 !CLAUDE.md
 *.db
 nesql*.script
+*.eucache

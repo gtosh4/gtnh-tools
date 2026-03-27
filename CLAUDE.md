@@ -3,8 +3,8 @@
 ## Running the CLI
 
 ```bash
-./gtnh <subcommand> [args]          # query gtnh.db in the current directory
-./gtnh --data /path/to/gtnh.db ...  # use a different database file
+./gtnh <subcommand> [args]          # query nesql.db in the current directory
+./gtnh --data /path/to/nesql.db ...  # use a different database file
 ./gtnh --json <subcommand> ...      # emit JSON instead of human-readable text
 ```
 
@@ -18,12 +18,13 @@ cargo build --release && \cp -u target/release/gtnh .
 ## Subcommands
 
 ### `build-db [script] [--output <path>]`
-Convert `nesql-db.script` (HSQLDB dump) into `gtnh.db`. Only needed once (or after the
-script is updated). Defaults: script=`nesql-db.script`, output=`gtnh.db`.
+*(Legacy)* Convert `nesql-db.script` (HSQLDB dump) into a SQLite database.
+The exporter now writes directly to `nesql.db`, so this is rarely needed.
+Defaults: script=`nesql-db.script`, output=`nesql.db`.
 
 ```bash
 ./gtnh build-db
-./gtnh build-db /path/to/nesql-db.script --output /path/to/gtnh.db
+./gtnh build-db /path/to/nesql-db.script --output /path/to/nesql.db
 ```
 
 ### `search <query>`
@@ -222,11 +223,15 @@ or `jq`. The JSON schema directly mirrors the Rust structs (`GtRecipe`, `RecipeI
 
 ## Data Scale
 
-41,091 items · 1,542 fluids · 625 ore dicts · 154 recipe types · 190,080 recipes
+115,873 items · 1,542 fluids · 121,352 ore dicts · 2,206 recipe types · 226,374 recipes
+
+Also includes: 79 ore veins with dimensions, 55 small ore deposits, 538 bee mutations,
+482 bee product recipes, 424 mob entries with 1,105 drop entries (for EEC planning),
+and quest data (3,739 quests).
 
 Some machines/multiblocks have no recipe entry in the data (output computed outside GT
 recipe system). Notable gaps: IC2 Nuclear Fission (EU/t computed by reactor simulation,
-not stored), some BartWorks LNR fuel production chains.
+not stored). Planetary Gas Siphon and Bee Products are now included.
 
 ---
 
@@ -236,7 +241,7 @@ not stored), some BartWorks LNR fuel production chains.
 |------|----------|
 | `src/lib.rs` | `Repository`, all entity structs (`Item`, `Fluid`, `Recipe`, `GtRecipe`, …), SQLite queries, `build_db` |
 | `src/main.rs` | CLI (`clap` derive), display formatting, sort helpers |
-| `gtnh.db` | SQLite database built from `nesql-db.script` via `build-db` subcommand |
+| `nesql.db` | SQLite database exported directly by the NESQL exporter |
 
 ## Infinite resource sources
 In order of best to worst (written as currently available in ZPM):
@@ -248,7 +253,6 @@ In order of best to worst (written as currently available in ZPM):
 - Extreme Industrial Greenhouse (non-IC2 crop)
   - EIG isn't shown as recipes, see https://wiki.gtnewhorizons.com/wiki/Extreme_Industrial_Greenhouse for some of the recommended seeds
 - Planetary Gas Siphon
-  - These don't have recipes in data.bin, see https://wiki.gtnewhorizons.com/wiki/Planetary_Gas_Siphon for gases
 - Bees
 - Extreme Industrial Greenhouse (IC2 crop)
   - Use https://wiki.gtnewhorizons.com/wiki/IC2_Crops_List for the list of crops and their drops
