@@ -22,14 +22,17 @@ Multiblock. Only accepts the three highest-value combustion fuels.
 
 ### 1d. Universal Chemical Fuel Engine (UCFE) (LuV)
 Multiblock. Built from a Large Combustion Engine + Extreme Combustion Engine + LuV Hull.
-Uses combustion liquids (Diesel, Gas, Rocket Fuel) + Combustion Promoter.
+Accepts **three fuel categories** + Combustion Promoter:
 
 Efficiency formula: `exp(-C / (promoter_L / fuel_L)) × 1.5`, where:
-- C = 0.04 for Diesel/Gas, C = 0.005 for Rocket Fuel
-- At maximum promoter ratio: **150% efficiency**
+- **C = 0.04** for Combustion (Diesel) and Gas Turbine fuels
+- **C = 0.005** for Rocket Fuels — needs far less Combustion Promoter to hit max efficiency
+- At maximum promoter ratio: **150% efficiency** regardless of category
 
 Output scales with fuel volume × efficiency per second; cap determined by Dynamo Hatch tier.
-Use high-value fuels (High Octane Gasoline, Rocket Fuel) with generous Combustion Promoter for maximum output.
+Rocket fuels are the tier-appropriate choice at LuV: C=0.005 means near-150% efficiency is cheap to achieve.
+
+**Combustion Fuels (C=0.04):**
 
 | Fuel | fuel_value | Notes |
 |------|-----------|-------|
@@ -53,6 +56,30 @@ Use high-value fuels (High Octane Gasoline, Rocket Fuel) with generous Combustio
 | Biomass | 8 | |
 | Short Mead | 4 | |
 | Fish Oil | 2 | Weakest |
+
+**Gas Turbine Fuels (C=0.04):** All 28 Gas Turbine Fuels (see §2b) also work. Top options:
+
+| Fuel | fuel_value | Notes |
+|------|-----------|-------|
+| Nitrobenzene | 1,600 | Best gas turbine fuel |
+| Nefarious Gas | 1,200 | |
+| Naquadah Gas | 1,024 | Late game |
+| Toluene | 328 | |
+| Benzene | 360 | |
+| LPG | 320 | |
+| Butane | 296 | |
+| Phenol | 288 | |
+| Butene | 256 | |
+| Rocket Fuel (EnderIO) | 250 | |
+
+**Rocket Engine Fuels (C=0.005):** GT++ rocket fuels. Values are ~1,000–5,000× larger than combustion fuels, making them by far the best UCFE fuel despite C=0.005 needing proportionally less promoter.
+
+| Fuel | fuel_value | Rocket Engine tier limit | Notes |
+|------|-----------|--------------------------|-------|
+| H8N4C2O4 Rocket Fuel | 12,588,000 | all tiers | Best UCFE rocket fuel |
+| CN3H7O3 Rocket Fuel | 6,144,000 | up to tier 6 | |
+| Dense Hydrazine Fuel Mixture | 3,072,000 | up to tier 4 | |
+| Rp-1 Rocket Fuel | 1,536,000 | up to tier 2 | Refined kerosene-based |
 
 **Fuel production branches:**
 
@@ -601,7 +628,7 @@ Also increase fuel consumption proportionally:
 | Thorium Based Liquid Fuel (Excited) | 2,200 | 500 ticks (25 s) | HV (Mixer [IV] with overclock) |
 | Uranium Based Liquid Fuel (Excited) | 12,960 | 100 ticks (5 s) | Early (Neutron Activator [ULV]) |
 | Plutonium Based Liquid Fuel (Excited) | 32,400 | 150 ticks (7.5 s) | Early (Neutron Activator [ULV]) |
-| Naquadah MkI | 975,000 | 60 ticks (3 s) | IV (Fusion Reactor [LuV] with overclock) |
+| Naquadah MkI | 975,000 | 60 ticks (3 s) | ZPM (Fusion Mk II: fusion_threshold 320M > Mk I max ~160M; Mk II controller Assembly Line needs Superdense Europium Plate via HIP [ZPM, compression_tier=1 not tracked by eu-cost]) |
 | Naquadah MkII | 2,300,000 | 70 ticks (3.5 s) | UV (LCR [UHV] with overclock) |
 | Naquadah MkIII | 9,511,000 | 80 ticks (4 s) | UHV (NFR [UHV], no overclock) |
 | Naquadah MkIV | 88,540,000 | 100 ticks (5 s) | UMV (NFR [UMV], no overclock) |
@@ -1027,7 +1054,60 @@ higher-density variant found in the Nether.
 
 ---
 
-## 24. Non-GT Generators
+## 24. Deep Earth Heating Pump (DEHP)
+
+**Machine type:** Geothermal Heat Pump multiblock (BartWorks / `tooltip.bw.mb_via`)
+`i:gregtech:gt.blockmachines:12729`
+
+Converts geothermal heat into Superheated Steam or Hot Coolant. Two modes toggled with a Screwdriver. Consumes **480 EU/t**; cycle time 1 tick. Each maintenance issue reduces output by 10%. **Explodes** if its working fluid (Distilled Water or Coolant) runs dry.
+
+**Build cost:** 2.41G EU [UV regular path] · min-tier **IV** (8.32T EU via all-IV ingredient paths)
+**Recipe:** IV Assembler — 1× Fluid Drilling Rig IV + 4,608× Molten HSS-E + 8× Large Ultimate Pipe + 32× Incoloy-903 Gear + 16× Dense PTFE Plate + 1× Field Generator IV
+
+### Direct Steam Mode
+
+Consumes Distilled Water (free from Reservoir Hatch). Produces **512,000 L/s = 25,600 L/t** Superheated Steam.
+
+This exactly matches the optimal flow of a **Duranium XLST** (25,600 L/t → 337,920 EU/t at 165% efficiency).
+
+| | Value |
+|---|---|
+| XLST gross output | 337,920 EU/t |
+| DEHP consumption | −480 EU/t |
+| **Net EU/t** | **337,440 EU/t** |
+| Net efficiency | 99.86% |
+
+**Full setup cost (one DEHP + one Duranium XLST):**
+
+| Component | EU cost | Peak tier |
+|-----------|--------:|:---------:|
+| DEHP controller | 2.41G EU | UV |
+| XLST controller | 19.52M EU | EV |
+| Duranium turbine blade (×16 per rotor) | 241M EU each | UV |
+| Duranium Huge Turbine rotor (assembled) | ~3.86G EU | LuV (TConstruct alloy) |
+
+The Duranium alloy (TConstruct) chain is the first-access bottleneck: min-tier **LuV** (3.72G EU path). Rotors are consumable — they degrade over time and must be replaced.
+
+### Coolant Heating Mode
+
+Converts **3,840 L/s = 192 L/t** IC2 Coolant → Hot Coolant. Hot Coolant fed into an **Extreme Heat Exchanger** yields 38,400 L/t Regular SC Steam → XLSCT (blade-dependent EU/t; see §6c and §8b for turbine blade options).
+
+This mode is useful when a SC Steam turbine is already in your power chain, or when you want to avoid a separate Distilled Water supply and can route Coolant instead.
+
+### DEHP vs. GT++ Geothermal Engines
+
+| | DEHP + Duranium XLST | Vulcan Geothermal Engine |
+|---|---:|---:|
+| EU/t | 337,440 | 32,768 |
+| Setup EU | ~6.3G EU (DEHP + XLST + rotor) | ~3.49G EU |
+| First-accessible tier | LuV | ZPM |
+| Fuel | Distilled Water (free) | Lava (free) |
+
+DEHP delivers ~10× the EU/t of a Vulcan engine for comparable investment and is accessible a full tier earlier.
+
+---
+
+## 25. Non-GT Generators
 
 ### IC2 Generators
 - **Geothermal Generator**: Lava → EU (IC2 machine)
@@ -1071,11 +1151,11 @@ Each cell shows the EU/t output when that family first becomes viable at that ti
 | Combustion / Diesel (per engine) | 32 | 128 | 512 | 2k | 32k | — | — | — | — | — | — |
 | Gas Turbine (per turbine) | 32 | 128 | 512 | 2k | 8k | — | — | — | — | — | — |
 | Semifluid Generator (per machine) | 32 | 128 | 512 | 2k | 8k | — | — | — | — | — | — |
-| Steam Turbine / XLST (per turbine) | — | — | — | — | 24k | — | — | 3M | — | — | — |
+| Steam Turbine / XLST (per turbine) | — | — | — | — | 24k | 337k | — | 3M | — | — | — |
 | Geothermal (GT++) | — | — | — | 2k | 8k | 32k | — | — | — | — | — |
 | LFTR | — | — | — | 8k | — | 32k | 131k | — | — | — | — |
 | IC2 Vacuum Reactor | — | 108k | — | — | — | 5M | — | — | — | — | — |
-| LNR (per multiblock) | — | — | — | — | — | 975k | — | 2.3M | 9.5M | — | 664B |
+| LNR (per multiblock) | — | — | — | — | — | — | 975k | 2.3M | 9.5M | — | 664B |
 | Compressed Solar (per panel, 24h) | — | 8 | 64 | — | 512 | 4k | 32k | 262k | 2M | 16M | — |
 | Solar Tower → XLST (max rings) | — | — | — | 40k | — | — | — | 78k | 110k | — | — |
 | Fusion → XLPT (per turbine) | — | — | — | — | — | 3.9M | — | — | 13.2M | — | — |
@@ -1084,11 +1164,11 @@ Each cell shows the EU/t output when that family first becomes viable at that ti
 
 Notes:
 - **Combustion**: single-block LV–EV (32→2k); Large Combustion Engine EV 2k (unboosted); Extreme Combustion Engine IV 32.7k (boosted)
-- **Gas Turbine**: single-block LV–IV (32→8k); Large Gas Turbine multiblock EV; UCFE LuV is categorically combustion
+- **Gas Turbine**: single-block LV–IV (32→8k); Large Gas Turbine multiblock EV; UCFE LuV accepts all three fuel categories (combustion, gas turbine, rocket engine)
 - **Semifluid**: single-block LV–IV (32→8k), efficiency degrades with tier (95%→75%)
-- **Steam / XLST**: Vulcanite blade IV (24k/turbine); Chrysotile blade UV (3M/turbine best single turbine); Solar Tower or Plasma via EHE drives the high-end numbers
+- **Steam / XLST**: Vulcanite blade IV (24k/turbine); DEHP → Duranium XLST LuV (337k net); Chrysotile blade UV (3M/turbine best single turbine); Solar Tower or Plasma via EHE drives the high-end numbers
 - **HTGR**: EU *consumer* (30,720 EU/t at LuV), not a generator — part of the nuclear fuel cycle
-- **LNR**: LuV entry = MkI 975k; UV = MkII 2.3M; UHV = MkIII 9.5M; UIV+ = theoretical max MkVI ×boosters ~664B
+- **LNR**: ZPM entry = MkI 975k; UV = MkII 2.3M; UHV = MkIII 9.5M; UIV+ = theoretical max MkVI ×boosters ~664B
 - **Fusion → EHE → XLST**: D+T reactor at LuV (390k per reactor, Trinium blade); UV Fusion / Heliothermal at UHV (91M per reactor, Infinity blade)
 - **SLAM / Dyson Swarm**: SLAM ~50T per structure; Dyson Swarm ~100B after full construction
 
@@ -1143,6 +1223,7 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | GT++ Vulcan Geothermal Engine | 32,768 | ZPM | 3.49G EU | 38 EU/mL |
 | UCFE (150% eff, high-octane fuel) | variable, cap = dynamo tier | IV | 552.82M EU (432.38M UCFE + 120.44M LuV Dynamo Hatch) | variable (combustion fuel; see §1d) |
 | Lightning Rod III (IV out, ~185k avg) | ~185,000 avg | ZPM | 6.75G EU | free (lightning) |
+| DEHP + Duranium XLST (Direct Steam, 25,600 L/t) | 337,440 | LuV | ~6.3G EU (2.41G DEHP + 19.52M XLST + ~3.86G rotor) | free (Distilled Water) |
 | Compact Kinetic Generator (Extreme) | ~16,384 | ZPM | 18.92G EU | free (wind/water) |
 | Quintuple-Compressed Solar (fire/water infused, 24h) | 32,768 | ZPM | 50.14G EU | free (solar) |
 | Sextuple-Compressed Solar (fire/water infused, 24h) | 262,144 | UV | 412.35G EU | free (solar) |
@@ -1151,8 +1232,8 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | LFTR (Fuel 3) | 131,072 | ZPM | 285.56M EU | 849.6k EU/mL |
 | IC2 Vacuum Reactor (MOX) | 107,979 | ZPM | 110.21M EU | 1.88M EU/quad rod |
 | IC2 Vacuum Reactor (The Core) | ~4,979,200 | ZPM | 110.21M EU | 2.03G EU/assembly |
-| LNR MkI (base) | 975,000 | LuV | 655.36M EU | 5.12M EU/mL |
-| LNR MkII (base) | 2,300,000 | UHV | 655.36M EU | 10.91M EU/mL |
+| LNR MkI (base) | 975,000 | ZPM | 655.36M EU | 5.12M EU/mL |
+| LNR MkII (base) | 2,300,000 | UV | 655.36M EU | 10.91M EU/mL |
 | LNR MkIII (base) | 9,511,000 | UHV | 655.36M EU | 14.99M EU/mL |
 | LNR MkIV (base) | 88,540,000 | UMV | 655.36M EU | 158.75M EU/mL |
 | LNR MkV (base) | 399,576,000 | UMV | 655.36M EU | 684.94M EU/mL |
@@ -1179,70 +1260,186 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 
 ---
 
-## Family Ratings
+## Power by Tier
 
-**Criteria:**
-- **Spammability**: cost to build many units + ongoing fuel cost. ★★★★★ = trivially cheap.
-- **Fuel ROI**: EU output ÷ EU spent producing fuel. ★★★★★ = free infinite source (∞ ROI).
-- **Tier Scaling**: EU/t gain over the first 3 tiers from earliest access. ★★★★★ = consistent ~4× each step.
-
-| Family | Earliest | Spammability | Fuel ROI | Tier Scaling |
-|--------|----------|:---:|:---:|:---:|
-| Gas Turbine | LV | ★★★★★ | ★★★★★ | ★★★★★ |
-| Combustion / Diesel | MV | ★★★★★ | ★★★★★ | ★★★★★ |
-| Semifluid | MV | ★★★★☆ | ★★★★★ | ★★★★☆ |
-| Acid Generator | LV | ★★★★☆ | ★★☆☆☆ | ★★★★★ |
-| Steam (Boiler → Turbine) | HV | ★★★☆☆ | ★★★★★ | ★★★★★ |
-| Compressed Solar | MV | ★★★☆☆ | ★★★★★ | ★★★☆☆ |
-| Magic Energy Absorber | MV | ★★★☆☆ | ★★★★★ | ★★★★☆ |
-| Geothermal (GT++) | IV | ★★★★☆ | ★★★★★ | ★★★★★ |
-| Lightning Rod | IV | ★★☆☆☆ | ★★★★★ | ★★☆☆☆ |
-| LFTR | ZPM | ★★★☆☆ | ★★★★☆ | ★★★★★ |
-| IC2 Vacuum Reactor | ZPM | ★★☆☆☆ | ★★★★★ | ★★★★☆ |
-| LNR (Liquid Naquadah) | LuV | ★★☆☆☆ | ★★★★☆ | ★★★★☆ |
-| Plasma (Fusion → Gens/Turbines) | UIV | ★☆☆☆☆ | ★★★★★ | ★★★★★ |
-| Antimatter (SSASS → SLAM) | UMV | ★☆☆☆☆ | ★★★★★ | ★★★★★ |
+*Each section lists every Quick Reference generator first accessible at that voltage tier. **Spam** = build + fuel cost (★★★★★ cheapest). **ROI** = fuel efficiency (★★★★★ = free/ambient). Scaling columns show EU/t for the natural tier upgrade, or `N*` when no upgrade exists (= 4 units of the current generator at 4× cost). `—` = family caps here.*
 
 ---
 
-**Gas Turbine** — The benchmark. 79.8k EU setup at LV, Methane/Natural Gas free from PGS, 4× per single-block tier LV→IV. Large Gas Turbine multiblock at HV adds another order of magnitude. Nothing else at LV competes.
+### LV *(→MV →HV →EV)*
 
-**Combustion / Diesel** — Identical story: ~80k EU setup, Reservoir Hatch oil is free, same 4× progression. Extreme Combustion Engine (EV, min-tier) pushes 32.7k EU/t boosted. The two families are practically interchangeable in practice — run both off the same refinery.
+| Generator | EU/t | Spam | ROI | MV | HV | EV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| Gas Turbine | 128 | ★★★★★ | ★★★★★ | 512* | 2,048 | 8,192* |
+| Acid Generator (LV) | 32 | ★★★★☆ | ★★☆☆☆ | 128 | 512 | 2,048 |
 
-**Semifluid** — The forgotten third leg of the oil triad. Heavy Fuel and Glycerol are refinery byproducts, effectively free. Efficiency degrades each tier (95%→75%) so the 4× output gain is slightly undercut; net scaling is ~3.3× per step. Best treated as a passive byproduct-drain rather than a dedicated power source.
-
-**Acid Generator** — Machine is trivially cheap and LV-accessible. But standalone, HF acid costs 37.8k EU to make and generates ~38.8k EU burned — a 1.03× return. **Never produce acid just for power.** This is exclusively a byproduct sink: if you're running ore processing anyway and acid comes out, plug it in. In that context the ROI is infinite and the LV→EV 4× scaling is a free bonus.
-
-**Steam (Boiler → Turbine)** — Underrated ceiling. Cheap fuel (coal, lava, solar salt all free), but the big story is blade upgrades: MAR-M200 (MV forming press, HV-accessible) → Vulcanite (IV planet, 24k EU/t per LST) → Chrysotile (UV planet, 190k EU/t per LST). Each jump is 6–8×, not 4×. The XLST multiplies everything by 16. Downside: blade materials gate the whole progression behind planetary exploration.
-
-**Compressed Solar** — Free energy forever, no fuel chain. 8× output per tier but setup cost also scales 8×, so spammability collapses fast after Triple-Compressed. Fire/water infusion gives 24h uptime — no day/night cycle to manage. Best as set-and-forget fill-in power, not primary generation.
-
-**Magic Energy Absorber** — Dragon Egg = free permanent power. One egg per machine hard-caps spam, but each machine is not expensive to build. 4× per tier Novice→Grandmaster, caps at Grandmaster (EV min-tier, 2,048 EU/t). Great supplementary source; poor primary source at scale.
-
-**Geothermal (GT++)** — The cleanest progression in the game. Lava from Reservoir Hatch or Nether = free. Basic (IV, 2,048) → Turbo (LuV, 8,192) → Vulcan (ZPM, 32,768): exact 4× each tier, no gimmicks. Setup cost is real (98M→870M→3.5G EU) but not prohibitive at the tiers involved.
-
-**Lightning Rod** — Free lightning sounds good. It isn't. All three rods fill the same 50M EU buffer per strike and the strike cadence (256 ticks) is always the bottleneck — output rate is never the limiting factor. Tier upgrades only reduce decay waste during drain (Rod I loses 44% to decay; Rod III loses 6%) and raise output voltage. Average EU/t is therefore 109k→159k→184k across tiers, under 1.7× total. One Rod III costs 22× more than one Rod I; 22× Rod I's give ~2.4M EU/t vs 184k EU/t. Spam Rod I for EU quantity; build Rod II/III only if you need EV/IV voltage directly.
-
-**LFTR** — Hidden gem of ZPM era. One machine runs all three fuel grades without rebuilding. 8k→32k→131k EU/t just by producing better fuel (Fuel 1→2→3), all at ZPM, no new machine needed. LFTB coolant is consumed each cycle (ongoing cost) and the fuel chain requires fluoride chemistry, but both are manageable. Setup cost 285M EU is modest for ZPM. Uranium Hexafluoride byproduct feeds back into fuel processing.
-
-**IC2 Vacuum Reactor** — Uranium ROI is staggering: ore → tens of thousands of EU/t per reactor. MOX and HD Plutonium chains are progressively complex but each step multiplies output 2.5–16×. Fuel chains require neutron irradiation and reprocessing infrastructure. Best thought of as a self-contained mid-game power island; the simulation is not stored in recipe data so it's opaque to analysis tools.
-
-**LNR (Liquid Naquadah)** — 655M EU controller at LuV, then fuel complexity escalates: MkIII needs exotic Naquadah refinery chains; MkIV–VI require UIV–UMV recipes. The coolant and booster multipliers (up to ~14× combined) let you defer fuel upgrades by stacking multipliers, which is unique. Naquadah ore is precious so ROI depends on mining volume.
-
-**Plasma (Fusion → Gens/Turbines)** — The endgame ceiling before antimatter. D+T from PGS costs nearly nothing; Fusion Mk I at UIV is the real gate. Once through: D+T → He plasma → XLPT (~3.9M EU/t), or EHE → XLST (390k/reactor with Trinium blade). Scale to UV Fusion for Celestial Tungsten plasma and 91M EU/t per reactor via EHE with Infinity blades. Every tier multiplies output massively. The ★☆☆☆☆ spammability reflects the Fusion Mk I build cost — once you have one reactor, additional plasma generators and turbines are relatively cheap.
-
-**Antimatter (SSASS → SLAM)** — The true endgame. SSASS produces Semi-Stable Antimatter from protomatter; SLAM annihilates it against a matter catalyst every 20 ticks. Output formula: `Efficiency × 1e12 × Antimatter_L ^ E` EU/cycle, where E = 1.00 (Molten Copper), 1.02 (UMV Superconductor Base), or 1.03 (UMV Superconductor Base wireless). E > 1 makes scaling **super-linear** — doubling antimatter volume more than doubles output. At 1,000L with Copper: ~50T EU/t. The exponent means output grows faster than the antimatter stockpile; the system is self-reinforcing once seeded. Build cost is >8T EU (structure blocked by Prismatic Naquadah), requiring UMV Assemblyline. The ★★★★★ tier scaling rating reflects the super-linear exponent, not tier-by-tier machine upgrades.
+**Gas Turbine**: 79.8k EU build; MV = ×4 spam (no single-block MV gas turbine); HV = Large Gas Turbine multiblock (19.66M EU); EV = ×4 LGT spam. **Acid Generator**: scales exactly through MV/HV/EV tiers; byproduct sink only — never produce acid for power (1.03× ROI standalone).
 
 ---
 
-### Practical tier summary
+### MV *(→HV →EV →IV)*
 
-| Era | Best primary | Best fill-in | Notes |
-|-----|-------------|-------------|-------|
-| LV–MV | Gas Turbine + Combustion | Acid Gen (byproduct) | Nothing else is cost-competitive |
-| HV–EV | Steam (blade upgrades) | Magic Absorber | Boiler + LST comes online; first Vulcanite is IV-gated |
-| IV–LuV | Geothermal | UCFE, LNR MkI | Geothermal 4× per tier, free lava; LNR MkI 975k/multiblock |
-| ZPM | LFTR, IC2 Vacuum | Geothermal (Vulcan) | LFTR upgrades via fuel only; IC2 Vacuum scales via fuel chain |
-| LuV–UIV | LNR MkII–III | Compressed Solar (passive) | LNR coolant+booster multipliers defer fuel chain upgrades |
-| UIV | Fusion → Plasma | LNR MkIV–VI | Fusion obsoletes everything below in raw EU/t |
-| UMV+ | Antimatter (SLAM) | Fusion → Plasma | Super-linear output; Dyson Swarm for passive parallel EU |
+| Generator | EU/t | Spam | ROI | HV | EV | IV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| Compressed Solar (1×) | 8 | ★★★☆☆ | ★★★★★ | 64 | 256* | 512 |
+| Single-block Combustion Gen | 32 | ★★★★★ | ★★★★☆ | 128* | 2,048 | 32,700 |
+| Acid Generator (MV) | 128 | ★★★★☆ | ★★☆☆☆ | 512 | 2,048 | 8,192* |
+| Semifluid Gen (Basic, LV) | 32 | ★★★☆☆ | ★★★☆☆ | 512 | 2,048 | 8,192 |
+| Semifluid Gen (Advanced, MV) | 128 | ★★★★☆ | ★★★☆☆ | 512 | 2,048 | 8,192 |
+| Magic Energy Absorber (Novice) | 32 | ★★★☆☆ | ★★★★★ | 128 | 2,048 | 8,192* |
+| Magic Energy Converter (Novice) | 32 | ★★☆☆☆ | ★☆☆☆☆ | 128 | 512 | 2,048* |
+
+**Compressed Solar**: HV = Double-Compressed (64, 8×); EV = ×4 spam (Triple-Compressed needs IV); IV = Triple-Compressed (512). **Single-block Combustion**: HV = ×4 spam; EV = Large Combustion Engine (2,048); IV = ECE boosted (32,700). **Semifluid**: Basic and Advanced share the same upgrade path (Turbo→Turbo II→Turbo III) at 12.8k EU/mL heavy fuel; efficiency degrades per tier. **Magic Absorber Novice→Adept (HV)→Grandmaster (EV, 2,048; Dragon Egg required)**. **Magic Converter**: 578.68M EU/item fuel cost — use only as a Vis sink; terrible ROI.
+
+---
+
+### HV *(→EV →IV →LuV)*
+
+| Generator | EU/t | Spam | ROI | EV | IV | LuV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| Basic GT Solar Panel | 1 | ★★☆☆☆ | ★★★★★ | 4* | 4* | 4* |
+| Double-Compressed Solar | 64 | ★★★☆☆ | ★★★★★ | 256* | 512 | 4,096 |
+| Large Gas Turbine | 2,048 | ★★★★☆ | ★★★★★ | 8,192* | 32,768* | 131,072* |
+| Acid Generator (HV) | 512 | ★★★☆☆ | ★★☆☆☆ | 2,048 | 8,192* | 32,768* |
+| Acid Generator (EV) | 2,048 | ★★★☆☆ | ★★☆☆☆ | 8,192* | 32,768* | 131,072* |
+| Semifluid Gen (Turbo, HV) | 512 | ★★★☆☆ | ★★★☆☆ | 2,048 | 8,192 | 32,768* |
+| Semifluid Gen (Turbo II, EV) | 2,048 | ★★★☆☆ | ★★★☆☆ | 8,192* | 8,192 | 32,768* |
+| Magic Energy Absorber (Adept) | 128 | ★★★☆☆ | ★★★★★ | 2,048 | 8,192* | 32,768* |
+| Magic Energy Converter (Adept) | 128 | ★★☆☆☆ | ★☆☆☆☆ | 512 | 2,048* | 8,192* |
+
+**Basic GT Solar**: 881.5k EU build; no tier upgrade — spam only. **Double-Compressed Solar**: EV = ×4 spam; IV = Triple-Compressed (512); LuV = Quad-Compressed (4,096). **Large Gas Turbine**: no gas turbine multiblock upgrade past HV — all ×4 spam; UCFE (IV) is a different family. **Acid Gen EV** is HV min-tier despite EV output. **Semifluid Turbo II** outputs EV power from HV; Turbo III at IV is the upgrade — note EV and IV columns show the same 8,192 (spam at EV vs. upgrade at IV). **Magic Absorber Adept→Grandmaster (EV, 2,048)** skips Master for best EU/t.
+
+---
+
+### EV *(→IV →LuV →ZPM)*
+
+| Generator | EU/t | Spam | ROI | IV | LuV | ZPM |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| Magic Energy Absorber (Master) | 512 | ★★★☆☆ | ★★★★★ | 2,048 | 8,192* | 32,768* |
+| Magic Energy Absorber (Grandmaster) | 2,048 | ★★★☆☆ | ★★★★★ | 8,192* | 32,768* | 131,072* |
+| Magic Energy Converter (Master) | 512 | ★★☆☆☆ | ★☆☆☆☆ | 2,048* | 8,192* | 32,768* |
+| Compact Kinetic Generator (Low) | ~256 | ★★★☆☆ | ★★★★★ | ~1,024 | ~4,096 | ~16,384 |
+| Solar Tower → XLST (ENA 116%, max rings) | ~40,000 | ★★☆☆☆ | ★★★★★ | 160,000* | 160,000* | 160,000* |
+| Large Combustion Engine | 2,048 | ★★★★☆ | ★★★★☆ | 32,700 | 130,800* | 523,200* |
+| Extreme Combustion Engine (ECE) | 10,900 / 32,700 | ★★★☆☆ | ★★★★☆ | 130,800* | 523,200* | 2,092,800* |
+
+**Magic Absorber**: Grandmaster is the final tier; Dragon Egg required on top permanently. **Compact Kinetic Generator**: exact 4× per family step (Low→Medium→High→Extreme) on wind/water; free fuel. **Solar Tower**: ~40k EU/t fixed until UV (Infinity blades, ~78k) and UHV (Shirabon, ~110k) — well outside this window; all ×4 spam here. **LCE→ECE**: both EV min-tier; combustion family peaks at ECE (32,700 boosted); IV and beyond = ×4 spam.
+
+---
+
+### IV *(→LuV →ZPM →UV)*
+
+| Generator | EU/t | Spam | ROI | LuV | ZPM | UV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| RTG (²⁴⁹Am) | 16 | ★★★☆☆ | ★★☆☆☆ | 64* | 64* | 64* |
+| RTG (²³⁸Pu) | 64 | ★★☆☆☆ | ★★☆☆☆ | 256* | 256* | 256* |
+| Triple-Compressed Solar | 512 | ★★★☆☆ | ★★★★★ | 4,096 | 32,768 | 262,144 |
+| Semifluid Gen (Turbo III, IV) | 8,192 | ★★★☆☆ | ★★★☆☆ | 32,768* | 131,072* | 524,288* |
+| GT++ Basic Geothermal Engine | 2,048 | ★★★★☆ | ★★★★★ | 8,192 | 32,768 | — |
+| Compact Kinetic Generator (Medium) | ~1,024 | ★★★☆☆ | ★★★★★ | ~4,096 | ~16,384 | 65,536* |
+| Lightning Rod I (~109k avg) | ~109,000 | ★★★☆☆ | ★★★★★ | ~160,000 | ~185,000 | — |
+| UCFE (150% eff, dynamo-capped) | variable | ★★☆☆☆ | ★★★★☆ | — | — | — |
+
+**RTG**: fixed output, no tier upgrade; use only for small persistent loads. **Triple-Compressed Solar**: 8× per step → Quad (LuV, 4,096) → Quint (ZPM, 32,768) → Sext (UV, 262,144). **Semifluid Turbo III**: final tier; all scaling = ×4 spam. **Geothermal**: exact 4× (Basic→Turbo→Vulcan); Vulcan caps at ZPM; free lava. **CKG Medium→High (LuV)→Extreme (ZPM)**; UV = ×4 spam (no CKG Extreme+). **Lightning Rod**: all three rods share a fixed 256-tick strike cadence — tier upgrades reduce energy-decay loss (44%→6%) but avg EU/t only scales 1.5× per rod; caps at ZPM. **UCFE**: output capped by dynamo hatch tier; accepts combustion (C=0.04), gas turbine (C=0.04), and rocket engine fuels (C=0.005, see §1d). With H8N4C2O4 (12,588,000 fuel_value) it hits the dynamo ceiling instantly; install ZPM dynamo hatch for higher output cap.
+
+---
+
+### LuV *(→ZPM →UV →UHV)*
+
+| Generator | EU/t | Spam | ROI | ZPM | UV | UHV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| Quadruple-Compressed Solar | 4,096 | ★★☆☆☆ | ★★★★★ | 32,768 | 262,144 | 2,097,152 |
+| GT++ Turbo Geothermal Engine | 8,192 | ★★★★☆ | ★★★★★ | 32,768 | — | — |
+| Compact Kinetic Generator (High) | ~4,096 | ★★☆☆☆ | ★★★★★ | ~16,384 | 65,536* | 262,144* |
+| Lightning Rod II (~160k avg) | ~160,000 | ★★★☆☆ | ★★★★★ | ~185,000 | — | — |
+| DEHP + Duranium XLST (Direct Steam) | 337,440 | ★★☆☆☆ | ★★★★★ | 337,440* | 337,440* | 337,440* |
+
+**Quad-Compressed Solar**: 8× per step → Quint (ZPM, 32k) → Sext (UV, 262k) → Sept (UHV, 2M). **Turbo Geothermal**: 4× to Vulcan (ZPM); caps there. **CKG High→Extreme (ZPM)**; UV/UHV = ×4 spam. **Lightning Rod II→III (ZPM)**; both cap at ZPM (no UV rod). **DEHP**: output fixed to Duranium XLST optimal flow (25,600 L/t); upgrade = swap rotor material (see §8b, §24); free Distilled Water.
+
+---
+
+### ZPM *(→UV →UHV →UEV)*
+
+| Generator | EU/t | Spam | ROI | UV | UHV | UEV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| GT++ Vulcan Geothermal Engine | 32,768 | ★★★★☆ | ★★★★★ | — | — | — |
+| Compact Kinetic Generator (Extreme) | ~16,384 | ★★☆☆☆ | ★★★★★ | 65,536* | 262,144* | 1,048,576* |
+| Quintuple-Compressed Solar | 32,768 | ★★☆☆☆ | ★★★★★ | 262,144 | 2,097,152 | 8,388,608* |
+| Lightning Rod III (~185k avg) | ~185,000 | ★★★☆☆ | ★★★★★ | — | — | — |
+| LFTR (Fuel 1) | 8,192 | ★★★☆☆ | ★★★★☆ | 32,768 | 131,072 | 524,288* |
+| LFTR (Fuel 2) | 32,768 | ★★★☆☆ | ★★★☆☆ | 131,072 | 524,288* | 524,288* |
+| LFTR (Fuel 3) | 131,072 | ★★★☆☆ | ★★★☆☆ | 524,288* | 524,288* | 524,288* |
+| IC2 Vacuum Reactor (MOX) | ~108,000 | ★★★☆☆ | ★★★☆☆ | ~4,979,200 | 19,916,800* | 19,916,800* |
+| IC2 Vacuum Reactor (The Core) | ~4,979,200 | ★★☆☆☆ | ★★★★☆ | 19,916,800* | 19,916,800* | 19,916,800* |
+| LNR MkI | 975,000 | ★★☆☆☆ | ★★★☆☆ | 2,300,000 | 9,800,000* | 88,540,000 |
+
+**Vulcan Geothermal**: caps at ZPM; free lava from Nether. **CKG Extreme**: final CKG tier; all beyond = ×4 spam. **Quintuple-Compressed Solar**: 8× → Sextuple (UV, 262k); UEV = ×4 Septuple (no UEV compressed solar). **Lightning Rod III**: all rods cap at ZPM. **LFTR**: single 285.56M EU controller; fuel swap in same machine gives 8k→32k→131k EU/t with no hardware change. **IC2 Vacuum**: same 110.21M EU controller; MOX→The Core is a rod upgrade, not machine upgrade. **LNR MkI**: ZPM-accessible (Fusion Mk II required: fusion_threshold 320M > Mk I max; Fusion Mk II needs Superdense Europium Plate via HIP [ZPM]); UV upgrade = MkII (2.3M); UEV = ×4 spam; UMV = MkIV (88.5M). LFTR and IC2 Vacuum are ZPM's best ROI sources.
+
+---
+
+### UV *(→UHV →UEV →UIV)*
+
+| Generator | EU/t | Spam | ROI | UHV | UEV | UIV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| Sextuple-Compressed Solar | 262,144 | ★★☆☆☆ | ★★★★★ | 2,097,152 | 8,388,608* | 8,388,608* |
+| Solar Tower → XLST (Infinity 225%, max rings) | ~78,000 | ★★☆☆☆ | ★★★★★ | ~110,000 | 440,000* | 440,000* |
+| LNR MkII | 2,300,000 | ★★☆☆☆ | ★★★☆☆ | 9,511,000 | 38,044,000* | 88,540,000 |
+
+**Sextuple-Compressed Solar**: 8× to Septuple (UHV, 2M); UEV = ×4 Septuple (Octuple needs UMV). **Solar Tower**: UHV = Shirabon blades (~110k); beyond UHV = ×4 spam. At UV, Chrysotile XLST blades also unlock (~3M EU/t per turbine — see §8b). **LNR MkII**: UV-accessible via LCR with UV energy hatch overclocking the UHV recipe; UHV upgrade = MkIII; UMV = MkIV (88.5M).
+
+---
+
+### UHV *(→UEV →UIV →UMV)*
+
+| Generator | EU/t | Spam | ROI | UEV | UIV | UMV |
+|-----------|-----:|:---:|:---:|---:|---:|---:|
+| LNR MkIII | 9,511,000 | ★★☆☆☆ | ★★★☆☆ | 38,044,000* | 38,044,000* | 88,540,000 |
+| Septuple-Compressed Solar | 2,097,152 | ★☆☆☆☆ | ★★★★★ | 8,388,608* | 8,388,608* | 16,777,216 |
+| Solar Tower → XLST (Shirabon 315%, max rings) | ~110,000 | ★★☆☆☆ | ★★★★★ | 440,000* | 440,000* | 440,000* |
+| Ultimate Pocket Sun | 576,000/cell | ★★☆☆☆ | ★★☆☆☆ | 2,304,000* | 2,304,000* | 2,304,000* |
+
+**LNR MkIII**: UHV-accessible via NFR (no overclock); UEV = ×4 spam (no UEV LNR); UMV = MkIV (88.5M EU/t). **Septuple-Compressed Solar**: UEV = ×4 Sept spam (Octuple needs UMV); UMV = Octuple (16.8M). **Solar Tower Shirabon**: final blade tier — all ×4 spam beyond. **Ultimate Pocket Sun**: Celestial Tungsten plasma fuel (2.13G EU/mL); no tier upgrade — spam only.
+
+---
+
+### UIV *(→UMV →UXV)*
+
+| Generator | EU/t | Spam | ROI | UMV | UXV |
+|-----------|-----:|:---:|:---:|---:|---:|
+| Fusion (D+T) → XLPT (Manyullyn) | ~3,900,000/XLPT | ★☆☆☆☆ | ★★★★★ | ~13,200,000 | — |
+| Fusion (D+T) → EHE → XLST (Trinium) | ~390,000/reactor | ★★☆☆☆ | ★★★★★ | ~91,000,000 | — |
+| Fusion (D+T) → EHE → XLST (Shirabon) | ~907,000/reactor | ★★☆☆☆ | ★★★★★ | ~128,000,000 | — |
+| Plasma Generator Mk I | 2,048 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
+| Plasma Generator Mk II | 8,192 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
+| Plasma Generator Mk III | 32,768 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
+| SLAM (1,000 L antimatter, Copper) | 50,000,000,000,000+ | ★☆☆☆☆ | ★★★★☆ | super-linear | super-linear |
+| Dyson Swarm (10,000 modules) | ~100,000,000,000 | ★☆☆☆☆ | ★★★★★ | scales linearly | scales linearly |
+
+Fusion Mk I (UIV build) is the infrastructure gate: once built, D+T plasma from PGS is free. **Fusion → XLPT**: highest raw EU/t per turbine; UMV = UV Fusion (~13.2M). **Fusion → EHE → XLST**: lower setup cost; Trinium (UIV) → Shirabon upgrade in same reactor. **Plasma Gen Mk I–III**: all UIV min-tier (same fusion prerequisite); Mk IV requires UMV. **SLAM**: output = `Efficiency × 1e12 × Antimatter_L^E` (super-linear with volume); 1,000 L Copper → ~50T EU/t; structure blocked by Prismatic Naquadah. **Dyson Swarm**: linear with module count; ~100B at 10,000 modules.
+
+---
+
+### UMV *(→UXV)*
+
+| Generator | EU/t | Spam | ROI | UXV |
+|-----------|-----:|:---:|:---:|---:|
+| LNR MkIV | 88,540,000 | ★★☆☆☆ | ★★★☆☆ | 399,576,000 |
+| LNR MkV | 399,576,000 | ★★☆☆☆ | ★★★☆☆ | 2,077,795,200 |
+| Plasma Generator Mk IV | 131,072 | ★★☆☆☆ | ★★★★★ | 524,288* |
+| UV Fusion → XLPT (CT Plasma, Infinity Cat.) | ~13,200,000/XLPT | ★☆☆☆☆ | — | — |
+| UV Fusion → EHE → XLST (Infinity 225%) | ~91,000,000/reactor | ★☆☆☆☆ | — | — |
+| UV Fusion → EHE → XLST (Shirabon 315%) | ~128,000,000/reactor | ★☆☆☆☆ | — | — |
+| Octuple-Compressed Solar | 16,777,216 | ★☆☆☆☆ | ★★★★★ | 67,108,864* |
+
+**LNR MkIV→MkV**: same controller (655M EU), fuel chain only cost; MkV→MkVI at UXV. **Plasma Gen Mk IV**: final plasma gen tier; UXV = ×4 spam. **UV Fusion**: Tartarite input has no DB path — fuel ROI unquantifiable; listed for completeness. **Octuple-Compressed Solar**: 44.21T EU build; UXV = ×4 spam (no UXV compressed solar).
+
+---
+
+### UXV *(terminal)*
+
+| Generator | EU/t | Spam | ROI |
+|-----------|-----:|:---:|:---:|
+| LNR MkVI (base) | 2,077,795,200 | ★★☆☆☆ | ★★★☆☆ |
+| LNR MkVI (×5 coolant loops, ×64 neutron boosters) | ~664,000,000,000 | ★☆☆☆☆ | ★★★☆☆ |
+
+Same 655M EU controller as MkI; MkVI is a fuel-chain upgrade from MkV. Boosted MkVI adds coolant loops and neutron reflectors for ~320× base output (~664B EU/t). No further LNR tier exists.

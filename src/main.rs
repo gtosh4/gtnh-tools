@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use gtnh::{
     EuGraph, EuGraphEdge, EuGraphNode, GtRecipe, Recipe, RecipeIoType, Repository, build_db,
+    tier_rank_u8,
 };
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -227,13 +228,20 @@ fn eu_per_output(gt: &GtRecipe, output_amount: i32) -> i64 {
 }
 
 fn fuel_value(recipe: &Recipe) -> Option<i64> {
-    recipe.gt_recipe.as_ref()?.metadata.iter().find_map(|m| {
-        if m.key == "fuel_value" {
-            Some(m.value)
-        } else {
-            None
-        }
-    })
+    let gt = recipe.gt_recipe.as_ref()?;
+    // Prefer explicit metadata entry (combustion, gas turbine, etc.)
+    if let Some(v) = gt.metadata.iter().find_map(|m| {
+        if m.key == "fuel_value" { Some(m.value) } else { None }
+    }) {
+        return Some(v);
+    }
+    // Rocket Engine Fuel recipes store the value in recipe_special_value (circuit_conflicts)
+    // with no metadata entry. The in-game display multiplies by 3000.
+    let type_name = recipe.recipe_type_name.as_deref().unwrap_or("");
+    if type_name.starts_with("Rocket Engine Fuel") && gt.circuit_conflicts > 0 {
+        return Some(gt.circuit_conflicts as i64 * 3000);
+    }
+    None
 }
 
 fn sort_key(recipe: &Recipe, target_id: &str, by: &SortBy) -> i64 {
@@ -729,6 +737,7 @@ fn add_infinite_source_recipes(eu_graph: &mut EuGraph) {
             num_slots: 0,
             recipe_type: label.to_string(),
             voltage_tier: String::new(),
+            metadata_tier: 0,
         });
         eu_graph.recipe_idx.insert(syn_id.to_string(), recipe_ni);
         eu_graph
@@ -763,6 +772,7 @@ fn add_eec_recipes(eu_graph: &mut EuGraph, repo: &Repository) {
             num_slots: 0,
             recipe_type: "Extreme Entity Crusher".to_string(),
             voltage_tier: String::new(),
+            metadata_tier: 0,
         });
         eu_graph.recipe_idx.insert(syn_id, recipe_ni);
         eu_graph
@@ -877,14 +887,6 @@ fn run_eu_dijkstra(eu_graph: &EuGraph) -> DijkState {
 
 /// Map a voltage tier string to a rank used for ordering.
 /// Empty string (free/synthetic sources) maps to 0.
-fn tier_rank_u8(t: &str) -> u8 {
-    const TIER_ORDER: &[&str] = &[
-        "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
-        "UHV", "UEV", "UIV", "UMV", "UXV",
-    ];
-    TIER_ORDER.iter().position(|&s| s == t).unwrap_or(0) as u8
-}
-
 /// Dijkstra variant that minimises (peak_voltage_tier_rank, eu_cost) lexicographically.
 ///
 /// The "cost" of a goods node is (max tier of any recipe in its production chain, total EU).
@@ -921,12 +923,12 @@ fn run_min_tier_dijkstra(eu_graph: &EuGraph) -> DijkState {
     // Fire zero-input recipes immediately.
     for ni in g.node_indices() {
         if let EuGraphNode::Recipe {
-            eu, output_amount, voltage_tier, ..
+            eu, output_amount, voltage_tier, metadata_tier, ..
         } = &g[ni]
         {
             if remaining_slots.get(&ni).copied().unwrap_or(0) == 0 {
                 let recipe_cost_eu = *eu as f64 / *output_amount;
-                let recipe_tier = tier_rank_u8(voltage_tier);
+                let recipe_tier = tier_rank_u8(voltage_tier).max(*metadata_tier);
                 for out_edge in g.edges_directed(ni, Direction::Outgoing) {
                     if matches!(out_edge.weight(), EuGraphEdge::Output) {
                         pq.push((
@@ -969,12 +971,12 @@ fn run_min_tier_dijkstra(eu_graph: &EuGraph) -> DijkState {
 
             if *rem == 0 {
                 let EuGraphNode::Recipe {
-                    eu, output_amount, voltage_tier, ..
+                    eu, output_amount, voltage_tier, metadata_tier, ..
                 } = &g[recipe_ni]
                 else {
                     continue;
                 };
-                let recipe_tier = tier_rank_u8(voltage_tier);
+                let recipe_tier = tier_rank_u8(voltage_tier).max(*metadata_tier);
                 let output_tier = recipe_tier.max(recipe_input_tier[&recipe_ni]);
                 let output_eu =
                     (*eu as f64 + recipe_input_eu[&recipe_ni]) / *output_amount;
@@ -1015,9 +1017,10 @@ fn run_max_tier_dijkstra(eu_graph: &EuGraph, max_tier: u8) -> DijkState {
     let mut pq: BinaryHeap<(Reverse<OrdF64>, NodeIndex, Option<NodeIndex>)> = BinaryHeap::new();
 
     // Initialise slot counts only for recipes within the tier budget.
+    // A recipe's effective tier is max(voltage_tier, metadata_tier) — both must be ≤ max_tier.
     for ni in g.node_indices() {
-        if let EuGraphNode::Recipe { num_slots, voltage_tier, .. } = &g[ni] {
-            if tier_rank_u8(voltage_tier) <= max_tier {
+        if let EuGraphNode::Recipe { num_slots, voltage_tier, metadata_tier, .. } = &g[ni] {
+            if tier_rank_u8(voltage_tier).max(*metadata_tier) <= max_tier {
                 remaining_slots.insert(ni, *num_slots);
             }
         }
@@ -1219,11 +1222,21 @@ fn peak_voltage_tier(
         return None;
     }
 
-    let EuGraphNode::Recipe { voltage_tier, num_slots, .. } = &eu_graph.g[recipe_ni] else {
+    let EuGraphNode::Recipe { voltage_tier, metadata_tier, num_slots, .. } = &eu_graph.g[recipe_ni] else {
         return None;
     };
-    let mut best = if !voltage_tier.is_empty() {
-        Some(voltage_tier.clone())
+    // Start with the higher of the recipe's voltage tier and any metadata-gated tier.
+    let effective_tier = if tier_rank_u8(voltage_tier) >= *metadata_tier {
+        voltage_tier.clone()
+    } else {
+        const TIER_NAMES: &[&str] = &[
+            "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
+            "UHV", "UEV", "UIV", "UMV", "UXV",
+        ];
+        TIER_NAMES.get(*metadata_tier as usize).unwrap_or(&"ULV").to_string()
+    };
+    let mut best = if !effective_tier.is_empty() {
+        Some(effective_tier)
     } else {
         None
     };

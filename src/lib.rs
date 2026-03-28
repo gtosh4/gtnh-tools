@@ -81,6 +81,55 @@ impl GtRecipe {
     }
 }
 
+/// Map a voltage-tier string to a sortable rank (0=ULV … 13=UXV).
+pub fn tier_rank_u8(t: &str) -> u8 {
+    const TIER_ORDER: &[&str] = &[
+        "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
+        "UHV", "UEV", "UIV", "UMV", "UXV",
+    ];
+    TIER_ORDER.iter().position(|&s| s == t).unwrap_or(0) as u8
+}
+
+/// Minimum tier required by metadata constraints that the recipe-voltage tag does not capture.
+///
+/// Two keys are handled:
+///
+/// * `fusion_threshold` — the EU a Fusion Reactor must have stored before the reaction starts.
+///   The three standard GT Fusion Reactor marks have caps of 160 M, 360 M, and 560 M EU.
+///   Recipes with threshold > 160 M require Mk II (ZPM, gated by the HIP unit which makes
+///   Superdense Europium Plate, compression_tier=1).  Mk III (> 360 M) requires UV-tier
+///   components in its Assembly Line recipe.  Above 560 M the FusionTech reactors apply (UHV+).
+///
+/// * `compression_tier` — marks that a recipe requires a specialised compressor rather than
+///   the standard GT Compressor.  Tier 1 = Hot Isostatic Pressurization (HIP) unit, first
+///   accessible at ZPM.  Tier 2 = higher-tier exotic compressor, first accessible at UHV.
+pub fn metadata_tier_min(gt: &GtRecipe) -> u8 {
+    let mut min = 0u8;
+    for m in &gt.metadata {
+        let extra = match m.key.as_str() {
+            "fusion_threshold" => {
+                if m.value <= 160_000_000 {
+                    0 // Mk I — no additional constraint beyond recipe voltage
+                } else if m.value <= 360_000_000 {
+                    tier_rank_u8("ZPM") // Mk II
+                } else if m.value <= 560_000_000 {
+                    tier_rank_u8("UV") // Mk III
+                } else {
+                    tier_rank_u8("UHV") // FusionTech MK IV+
+                }
+            }
+            "compression_tier" => match m.value {
+                1 => tier_rank_u8("ZPM"), // HIP (Hot Isostatic Pressurization)
+                2 => tier_rank_u8("UHV"), // ultra-high-pressure exotic compressor
+                _ => 0,
+            },
+            _ => 0,
+        };
+        min = min.max(extra);
+    }
+    min
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecipeIoType {
@@ -1378,6 +1427,10 @@ pub enum EuGraphNode {
         recipe_type: String,
         /// GT voltage tier string (e.g. "ULV", "EV"). Empty for non-GT recipes.
         voltage_tier: String,
+        /// Additional minimum tier imposed by metadata gates (fusion_threshold,
+        /// compression_tier) that the voltage tag alone does not capture.
+        /// 0 means no additional constraint.  See [`metadata_tier_min`].
+        metadata_tier: u8,
     },
 }
 
@@ -1532,6 +1585,11 @@ impl Repository {
                     .as_ref()
                     .map(|gt| gt.voltage_tier.clone())
                     .unwrap_or_default();
+                let metadata_tier = recipe
+                    .gt_recipe
+                    .as_ref()
+                    .map(|gt| metadata_tier_min(gt))
+                    .unwrap_or(0);
 
                 // Deduplicate: same (recipe_id, output_goods_id) may appear in multiple
                 // cache buckets if the recipe has multiple outputs. Skip duplicates.
@@ -1549,6 +1607,7 @@ impl Repository {
                     num_slots,
                     recipe_type,
                     voltage_tier,
+                    metadata_tier,
                 });
                 recipe_idx.insert(recipe_key, recipe_ni);
 
