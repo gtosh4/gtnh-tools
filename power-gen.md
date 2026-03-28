@@ -1201,6 +1201,7 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | IC2 Vacuum Reactor | ZPM | ★★☆☆☆ | ★★★★★ | ★★★★☆ |
 | LNR (Liquid Naquadah) | LuV | ★★☆☆☆ | ★★★★☆ | ★★★★☆ |
 | Plasma (Fusion → Gens/Turbines) | UIV | ★☆☆☆☆ | ★★★★★ | ★★★★★ |
+| Antimatter (SSASS → SLAM) | UMV | ★☆☆☆☆ | ★★★★★ | ★★★★★ |
 
 ---
 
@@ -1228,7 +1229,9 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 
 **LNR (Liquid Naquadah)** — 655M EU controller at LuV, then fuel complexity escalates: MkIII needs exotic Naquadah refinery chains; MkIV–VI require UIV–UMV recipes. The coolant and booster multipliers (up to ~14× combined) let you defer fuel upgrades by stacking multipliers, which is unique. Naquadah ore is precious so ROI depends on mining volume.
 
-**Plasma (Fusion → Gens/Turbines)** — The endgame ceiling. D+T from PGS costs nearly nothing; Fusion Mk I at UIV is the real gate. Once through: D+T → He plasma → XLPT (~3.9M EU/t), or EHE → XLST (390k/reactor with Trinium blade). Scale to UV Fusion for Celestial Tungsten plasma and 91M EU/t per reactor via EHE with Infinity blades. Every tier multiplies output massively. The ★☆☆☆☆ spammability reflects the Fusion Mk I build cost — once you have one reactor, additional plasma generators and turbines are relatively cheap.
+**Plasma (Fusion → Gens/Turbines)** — The endgame ceiling before antimatter. D+T from PGS costs nearly nothing; Fusion Mk I at UIV is the real gate. Once through: D+T → He plasma → XLPT (~3.9M EU/t), or EHE → XLST (390k/reactor with Trinium blade). Scale to UV Fusion for Celestial Tungsten plasma and 91M EU/t per reactor via EHE with Infinity blades. Every tier multiplies output massively. The ★☆☆☆☆ spammability reflects the Fusion Mk I build cost — once you have one reactor, additional plasma generators and turbines are relatively cheap.
+
+**Antimatter (SSASS → SLAM)** — The true endgame. SSASS produces Semi-Stable Antimatter from protomatter; SLAM annihilates it against a matter catalyst every 20 ticks. Output formula: `Efficiency × 1e12 × Antimatter_L ^ E` EU/cycle, where E = 1.00 (Molten Copper), 1.02 (UMV Superconductor Base), or 1.03 (UMV Superconductor Base wireless). E > 1 makes scaling **super-linear** — doubling antimatter volume more than doubles output. At 1,000L with Copper: ~50T EU/t. The exponent means output grows faster than the antimatter stockpile; the system is self-reinforcing once seeded. Build cost is >8T EU (structure blocked by Prismatic Naquadah), requiring UMV Assemblyline. The ★★★★★ tier scaling rating reflects the super-linear exponent, not tier-by-tier machine upgrades.
 
 ---
 
@@ -1241,4 +1244,5 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | IV–LuV | Geothermal | UCFE, LNR MkI | Geothermal 4× per tier, free lava; LNR MkI 975k/multiblock |
 | ZPM | LFTR, IC2 Vacuum | Geothermal (Vulcan) | LFTR upgrades via fuel only; IC2 Vacuum scales via fuel chain |
 | LuV–UIV | LNR MkII–III | Compressed Solar (passive) | LNR coolant+booster multipliers defer fuel chain upgrades |
-| UIV+ | Fusion → Plasma | LNR MkIV–VI | Fusion obsoletes everything below in raw EU/t |
+| UIV | Fusion → Plasma | LNR MkIV–VI | Fusion obsoletes everything below in raw EU/t |
+| UMV+ | Antimatter (SLAM) | Fusion → Plasma | Super-linear output; Dyson Swarm for passive parallel EU |
