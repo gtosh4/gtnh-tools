@@ -784,15 +784,22 @@ The **build tier** (LuV/ZPM/UV hull) is far above the **output tier** (HV/EV/IV)
 With a strike every 256 ticks (12.8 s) filling the 50M EU buffer, and machines drawing
 at full rated amperage, the buffer empties in:
 
-| Rod | Time to drain buffer | Avg EU/t to machines |
-|-----|---------------------|----------------------|
-| Rod I (HV) | ~107 ticks | ~109,000 EU/t |
-| Rod II (EV) | ~39 ticks | ~160,000 EU/t |
-| Rod III (IV) | ~11 ticks | ~185,000 EU/t |
+| Rod | Time to drain buffer | EU delivered | EU lost to decay | Avg EU/t |
+|-----|---------------------|-------------|-----------------|----------|
+| Rod I (HV) | ~107 ticks | 27.8M / 50M | 22.2M (44%) | ~109,000 EU/t |
+| Rod II (EV) | ~39 ticks | 40.7M / 50M | 9.3M (19%) | ~159,000 EU/t |
+| Rod III (IV) | ~12 ticks | 47.0M / 50M | 3.0M (6%) | ~184,000 EU/t |
+| (ideal, no decay) | — | 50.0M / 50M | 0 | ~195,000 EU/t |
 
-Rod III is most efficient because its fast draw rate leaves less time for the decay loss
-to accumulate. All three peak well above their rated single-amp voltage; the 512A
-output means the cable tier required is HV/EV/IV respectively.
+All three rods drain their buffer well before the next strike. The **limiting factor is
+always strike cadence** (256 ticks), not output rate. The tier differences only affect
+how much EU is wasted to the decay term `storedEU/100 + 1` during the drain window —
+Rod III loses 6% vs Rod I's 44%. The voltage tier (HV/EV/IV) determines what machines
+you can feed directly without transformers, not how much total EU you produce.
+
+**Implication:** for raw EU/t, spam Rod I. One Rod III costs 22× more than one Rod I
+(6.73G vs 301M EU) but delivers only 1.7× more average output. 22 Rod I's at the same
+cost yield ~2.4M EU/t vs 184k EU/t for one Rod III.
 
 **Practical notes:**
 - Always-thundering requires a weather control setup (e.g. Weather Obelisk, commands).
@@ -1213,7 +1220,7 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 
 **Geothermal (GT++)** — The cleanest progression in the game. Lava from Reservoir Hatch or Nether = free. Basic (IV, 2,048) → Turbo (LuV, 8,192) → Vulcan (ZPM, 32,768): exact 4× each tier, no gimmicks. Setup cost is real (98M→870M→3.5G EU) but not prohibitive at the tiers involved.
 
-**Lightning Rod** — Free lightning sounds good. It isn't. The scaling is the worst of any family: IV→LuV→ZPM gives 109k→160k→185k avg EU/t, less than 1.5× per step. The bulk of the value comes from spamming Rod I (cheapest), not upgrading. Rod II/III mostly exist to show off ZPM-hull tech.
+**Lightning Rod** — Free lightning sounds good. It isn't. All three rods fill the same 50M EU buffer per strike and the strike cadence (256 ticks) is always the bottleneck — output rate is never the limiting factor. Tier upgrades only reduce decay waste during drain (Rod I loses 44% to decay; Rod III loses 6%) and raise output voltage. Average EU/t is therefore 109k→159k→184k across tiers, under 1.7× total. One Rod III costs 22× more than one Rod I; 22× Rod I's give ~2.4M EU/t vs 184k EU/t. Spam Rod I for EU quantity; build Rod II/III only if you need EV/IV voltage directly.
 
 **LFTR** — Hidden gem of ZPM era. One machine runs all three fuel grades without rebuilding. 8k→32k→131k EU/t just by producing better fuel (Fuel 1→2→3), all at ZPM, no new machine needed. LFTB coolant is consumed each cycle (ongoing cost) and the fuel chain requires fluoride chemistry, but both are manageable. Setup cost 285M EU is modest for ZPM. Uranium Hexafluoride byproduct feeds back into fuel processing.
 
