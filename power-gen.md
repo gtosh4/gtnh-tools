@@ -1371,9 +1371,9 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | LFTR (Fuel 3) | 131,072 | ★★★☆☆ | ★★★☆☆ | 524,288* | 524,288* | 524,288* |
 | IC2 Vacuum Reactor (MOX) | ~108,000 | ★★★☆☆ | ★★★☆☆ | ~4,979,200 | 19,916,800* | 19,916,800* |
 | IC2 Vacuum Reactor (The Core) | ~4,979,200 | ★★☆☆☆ | ★★★★☆ | 19,916,800* | 19,916,800* | 19,916,800* |
-| LNR MkI | 975,000 | ★★☆☆☆ | ★★★☆☆ | 2,300,000 | 9,800,000* | 88,540,000 |
+| LNR MkI | 975,000 | ★★☆☆☆ | ★★★☆☆ | 2,300,000 | 9,511,000 | 38,044,000* |
 
-**Vulcan Geothermal**: caps at ZPM; free lava from Nether. **CKG Extreme**: final CKG tier; all beyond = ×4 spam. **Quintuple-Compressed Solar**: 8× → Sextuple (UV, 262k); UEV = ×4 Septuple (no UEV compressed solar). **Lightning Rod III**: all rods cap at ZPM. **LFTR**: single 285.56M EU controller; fuel swap in same machine gives 8k→32k→131k EU/t with no hardware change. **IC2 Vacuum**: same 110.21M EU controller; MOX→The Core is a rod upgrade, not machine upgrade. **LNR MkI**: ZPM-accessible (Fusion Mk II required: fusion_threshold 320M > Mk I max; Fusion Mk II needs Superdense Europium Plate via HIP [ZPM]); UV upgrade = MkII (2.3M); UEV = ×4 spam; UMV = MkIV (88.5M). LFTR and IC2 Vacuum are ZPM's best ROI sources.
+**Vulcan Geothermal**: caps at ZPM; free lava from Nether. **CKG Extreme**: final CKG tier; all beyond = ×4 spam. **Quintuple-Compressed Solar**: 8× → Sextuple (UV, 262k); UEV = ×4 Septuple (no UEV compressed solar). **Lightning Rod III**: all rods cap at ZPM. **LFTR**: single 285.56M EU controller; fuel swap in same machine gives 8k→32k→131k EU/t with no hardware change. **IC2 Vacuum**: same 110.21M EU controller; MOX→The Core is a rod upgrade, not machine upgrade. **LNR MkI**: ZPM-accessible (Fusion Mk II required: fusion_threshold 320M > Mk I max; Fusion Mk II needs Superdense Europium Plate via HIP [ZPM]); UV upgrade = MkII (2.3M); UHV upgrade = MkIII (9.5M); UEV = ×4 MkIII spam. LFTR and IC2 Vacuum are ZPM's best ROI sources.
 
 ---
 
@@ -1383,9 +1383,9 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 |-----------|-----:|:---:|:---:|---:|---:|---:|
 | Sextuple-Compressed Solar | 262,144 | ★★☆☆☆ | ★★★★★ | 2,097,152 | 8,388,608* | 8,388,608* |
 | Solar Tower → XLST (Infinity 225%, max rings) | ~78,000 | ★★☆☆☆ | ★★★★★ | ~110,000 | 440,000* | 440,000* |
-| LNR MkII | 2,300,000 | ★★☆☆☆ | ★★★☆☆ | 9,511,000 | 38,044,000* | 88,540,000 |
+| LNR MkII | 2,300,000 | ★★☆☆☆ | ★★★☆☆ | 9,511,000 | 38,044,000* | 38,044,000* |
 
-**Sextuple-Compressed Solar**: 8× to Septuple (UHV, 2M); UEV = ×4 Septuple (Octuple needs UMV). **Solar Tower**: UHV = Shirabon blades (~110k); beyond UHV = ×4 spam. At UV, Chrysotile XLST blades also unlock (~3M EU/t per turbine — see §8b). **LNR MkII**: UV-accessible via LCR with UV energy hatch overclocking the UHV recipe; UHV upgrade = MkIII; UMV = MkIV (88.5M).
+**Sextuple-Compressed Solar**: 8× to Septuple (UHV, 2M); UEV = ×4 Septuple (Octuple needs UMV). **Solar Tower**: UHV = Shirabon blades (~110k); beyond UHV = ×4 spam. At UV, Chrysotile XLST blades also unlock (~3M EU/t per turbine — see §8b). **LNR MkII**: UV-accessible via LCR with UV energy hatch overclocking the UHV recipe; UHV upgrade = MkIII (9.5M); UEV/UIV = ×4 MkIII spam; MkIV not until UMV.
 
 ---
 
