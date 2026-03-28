@@ -1169,3 +1169,69 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | SLAM (1000 L antimatter, Copper) | 50,000,000,000,000 EU/t | UIV build | >8.20T EU (SLAM 4.10T + SSASS 4.10T; structure blocked by Prismatic Naquadah) | semi-stable antimatter via SSASS (protomatter 79.64M EU/L) |
 | SLAM (scales super-linearly with volume) | up to 4.61e17 EU/t | UIV build | same | same |
 | Dyson Swarm (10,000 modules, D=1) | 100,000,000,000 EU/t | UIV build | >61.08T EU (Ground Unit; structure counts unknown) + 10k modules @ 3.07M EU each | ~3.07M EU/module maintenance (~821/h at C=0); Gelid Cryotheum no DB path |
+
+---
+
+## Family Ratings
+
+**Criteria:**
+- **Spammability**: cost to build many units + ongoing fuel cost. ★★★★★ = trivially cheap.
+- **Fuel ROI**: EU output ÷ EU spent producing fuel. ★★★★★ = free infinite source (∞ ROI).
+- **Tier Scaling**: EU/t gain over the first 3 tiers from earliest access. ★★★★★ = consistent ~4× each step.
+
+| Family | Earliest | Spammability | Fuel ROI | Tier Scaling |
+|--------|----------|:---:|:---:|:---:|
+| Gas Turbine | LV | ★★★★★ | ★★★★★ | ★★★★★ |
+| Combustion / Diesel | MV | ★★★★★ | ★★★★★ | ★★★★★ |
+| Semifluid | MV | ★★★★☆ | ★★★★★ | ★★★★☆ |
+| Acid Generator | LV | ★★★★☆ | ★★☆☆☆ | ★★★★★ |
+| Steam (Boiler → Turbine) | HV | ★★★☆☆ | ★★★★★ | ★★★★★ |
+| Compressed Solar | MV | ★★★☆☆ | ★★★★★ | ★★★☆☆ |
+| Magic Energy Absorber | MV | ★★★☆☆ | ★★★★★ | ★★★★☆ |
+| Geothermal (GT++) | IV | ★★★★☆ | ★★★★★ | ★★★★★ |
+| Lightning Rod | IV | ★★☆☆☆ | ★★★★★ | ★★☆☆☆ |
+| LFTR | ZPM | ★★★☆☆ | ★★★★☆ | ★★★★★ |
+| IC2 Vacuum Reactor | ZPM | ★★☆☆☆ | ★★★★★ | ★★★★☆ |
+| LNR (Liquid Naquadah) | LuV | ★★☆☆☆ | ★★★★☆ | ★★★★☆ |
+| Plasma (Fusion → Gens/Turbines) | UIV | ★☆☆☆☆ | ★★★★★ | ★★★★★ |
+
+---
+
+**Gas Turbine** — The benchmark. 79.8k EU setup at LV, Methane/Natural Gas free from PGS, 4× per single-block tier LV→IV. Large Gas Turbine multiblock at HV adds another order of magnitude. Nothing else at LV competes.
+
+**Combustion / Diesel** — Identical story: ~80k EU setup, Reservoir Hatch oil is free, same 4× progression. Extreme Combustion Engine (EV, min-tier) pushes 32.7k EU/t boosted. The two families are practically interchangeable in practice — run both off the same refinery.
+
+**Semifluid** — The forgotten third leg of the oil triad. Heavy Fuel and Glycerol are refinery byproducts, effectively free. Efficiency degrades each tier (95%→75%) so the 4× output gain is slightly undercut; net scaling is ~3.3× per step. Best treated as a passive byproduct-drain rather than a dedicated power source.
+
+**Acid Generator** — Machine is trivially cheap and LV-accessible. But standalone, HF acid costs 37.8k EU to make and generates ~38.8k EU burned — a 1.03× return. **Never produce acid just for power.** This is exclusively a byproduct sink: if you're running ore processing anyway and acid comes out, plug it in. In that context the ROI is infinite and the LV→EV 4× scaling is a free bonus.
+
+**Steam (Boiler → Turbine)** — Underrated ceiling. Cheap fuel (coal, lava, solar salt all free), but the big story is blade upgrades: MAR-M200 (MV forming press, HV-accessible) → Vulcanite (IV planet, 24k EU/t per LST) → Chrysotile (UV planet, 190k EU/t per LST). Each jump is 6–8×, not 4×. The XLST multiplies everything by 16. Downside: blade materials gate the whole progression behind planetary exploration.
+
+**Compressed Solar** — Free energy forever, no fuel chain. 8× output per tier but setup cost also scales 8×, so spammability collapses fast after Triple-Compressed. Fire/water infusion gives 24h uptime — no day/night cycle to manage. Best as set-and-forget fill-in power, not primary generation.
+
+**Magic Energy Absorber** — Dragon Egg = free permanent power. One egg per machine hard-caps spam, but each machine is not expensive to build. 4× per tier Novice→Grandmaster, caps at Grandmaster (EV min-tier, 2,048 EU/t). Great supplementary source; poor primary source at scale.
+
+**Geothermal (GT++)** — The cleanest progression in the game. Lava from Reservoir Hatch or Nether = free. Basic (IV, 2,048) → Turbo (LuV, 8,192) → Vulcan (ZPM, 32,768): exact 4× each tier, no gimmicks. Setup cost is real (98M→870M→3.5G EU) but not prohibitive at the tiers involved.
+
+**Lightning Rod** — Free lightning sounds good. It isn't. The scaling is the worst of any family: IV→LuV→ZPM gives 109k→160k→185k avg EU/t, less than 1.5× per step. The bulk of the value comes from spamming Rod I (cheapest), not upgrading. Rod II/III mostly exist to show off ZPM-hull tech.
+
+**LFTR** — Hidden gem of ZPM era. One machine runs all three fuel grades without rebuilding. 8k→32k→131k EU/t just by producing better fuel (Fuel 1→2→3), all at ZPM, no new machine needed. LFTB coolant is consumed each cycle (ongoing cost) and the fuel chain requires fluoride chemistry, but both are manageable. Setup cost 285M EU is modest for ZPM. Uranium Hexafluoride byproduct feeds back into fuel processing.
+
+**IC2 Vacuum Reactor** — Uranium ROI is staggering: ore → tens of thousands of EU/t per reactor. MOX and HD Plutonium chains are progressively complex but each step multiplies output 2.5–16×. Fuel chains require neutron irradiation and reprocessing infrastructure. Best thought of as a self-contained mid-game power island; the simulation is not stored in recipe data so it's opaque to analysis tools.
+
+**LNR (Liquid Naquadah)** — 655M EU controller at LuV, then fuel complexity escalates: MkIII needs exotic Naquadah refinery chains; MkIV–VI require UIV–UMV recipes. The coolant and booster multipliers (up to ~14× combined) let you defer fuel upgrades by stacking multipliers, which is unique. Naquadah ore is precious so ROI depends on mining volume.
+
+**Plasma (Fusion → Gens/Turbines)** — The endgame ceiling. D+T from PGS costs nearly nothing; Fusion Mk I at UIV is the real gate. Once through: D+T → He plasma → XLPT (~3.9M EU/t), or EHE → XLST (390k/reactor with Trinium blade). Scale to UV Fusion for Celestial Tungsten plasma and 91M EU/t per reactor via EHE with Infinity blades. Every tier multiplies output massively. The ★☆☆☆☆ spammability reflects the Fusion Mk I build cost — once you have one reactor, additional plasma generators and turbines are relatively cheap.
+
+---
+
+### Practical tier summary
+
+| Era | Best primary | Best fill-in | Notes |
+|-----|-------------|-------------|-------|
+| LV–MV | Gas Turbine + Combustion | Acid Gen (byproduct) | Nothing else is cost-competitive |
+| HV–EV | Steam (blade upgrades) | Magic Absorber | Boiler + LST comes online; first Vulcanite is IV-gated |
+| IV–LuV | Geothermal | UCFE, LNR MkI | Geothermal 4× per tier, free lava; LNR MkI 975k/multiblock |
+| ZPM | LFTR, IC2 Vacuum | Geothermal (Vulcan) | LFTR upgrades via fuel only; IC2 Vacuum scales via fuel chain |
+| LuV–UIV | LNR MkII–III | Compressed Solar (passive) | LNR coolant+booster multipliers defer fuel chain upgrades |
+| UIV+ | Fusion → Plasma | LNR MkIV–VI | Fusion obsoletes everything below in raw EU/t |
