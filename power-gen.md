@@ -1407,7 +1407,7 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | Generator | EU/t | Spam | ROI | UMV | UXV |
 |-----------|-----:|:---:|:---:|---:|---:|
 | Fusion (D+T) → XLPT (Manyullyn) | ~3,900,000/XLPT | ★☆☆☆☆ | ★★★★★ | ~13,200,000 | — |
-| Fusion (D+T) → EHE → XLST (Trinium) | ~390,000/reactor | ★★☆☆☆ | ★★★★★ | ~91,000,000 | — |
+| Fusion (D+T) → EHE → XLST (Trinium) | ~390,000/reactor | ★★☆☆☆ | ★★★★★ | ~128,000,000 | — |
 | Fusion (D+T) → EHE → XLST (Shirabon) | ~907,000/reactor | ★★☆☆☆ | ★★★★★ | ~128,000,000 | — |
 | Plasma Generator Mk I | 2,048 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
 | Plasma Generator Mk II | 8,192 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
@@ -1415,7 +1415,7 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | SLAM (1,000 L antimatter, Copper) | 50,000,000,000,000+ | ★☆☆☆☆ | ★★★★☆ | super-linear | super-linear |
 | Dyson Swarm (10,000 modules) | ~100,000,000,000 | ★☆☆☆☆ | ★★★★★ | scales linearly | scales linearly |
 
-Fusion Mk I (UIV build) is the infrastructure gate: once built, D+T plasma from PGS is free. **Fusion → XLPT**: highest raw EU/t per turbine; UMV = UV Fusion (~13.2M). **Fusion → EHE → XLST**: lower setup cost; Trinium (UIV) → Shirabon upgrade in same reactor. **Plasma Gen Mk I–III**: all UIV min-tier (same fusion prerequisite); Mk IV requires UMV. **SLAM**: output = `Efficiency × 1e12 × Antimatter_L^E` (super-linear with volume); 1,000 L Copper → ~50T EU/t; structure blocked by Prismatic Naquadah. **Dyson Swarm**: linear with module count; ~100B at 10,000 modules.
+Fusion Mk I (UIV build) is the infrastructure gate: once built, D+T plasma from PGS is free. **Fusion → XLPT**: highest raw EU/t per turbine; UMV = UV Fusion (~13.2M). **Fusion → EHE → XLST**: lower setup cost; Trinium (UIV) → Shirabon blade upgrade in same reactor (UIV-accessible); UMV for both = UV Fusion + Shirabon (~128M). **Plasma Gen Mk I–III**: all UIV min-tier (same fusion prerequisite); Mk IV requires UMV. **SLAM**: output = `Efficiency × 1e12 × Antimatter_L^E` (super-linear with volume); 1,000 L Copper → ~50T EU/t; structure blocked by Prismatic Naquadah. **Dyson Swarm**: linear with module count; ~100B at 10,000 modules.
 
 ---
 
