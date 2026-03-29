@@ -83,11 +83,14 @@ impl GtRecipe {
 
 /// Map a voltage-tier string to a sortable rank (0=ULV … 13=UXV).
 pub fn tier_rank_u8(t: &str) -> u8 {
+    if t.is_empty() {
+        return 0; // synthetic free recipes (PGS, EEC) have no voltage tier
+    }
     const TIER_ORDER: &[&str] = &[
         "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
-        "UHV", "UEV", "UIV", "UMV", "UXV",
+        "UHV", "UEV", "UIV", "UMV", "UXV", "MAX",
     ];
-    TIER_ORDER.iter().position(|&s| s == t).unwrap_or(0) as u8
+    TIER_ORDER.iter().position(|&s| s == t).unwrap_or(TIER_ORDER.len()) as u8
 }
 
 /// Minimum tier required by metadata constraints that the recipe-voltage tag does not capture.
