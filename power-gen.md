@@ -1158,8 +1158,8 @@ Each cell shows the EU/t output when that family first becomes viable at that ti
 | LNR (per multiblock) | — | — | — | — | — | — | 975k | 2.3M | 9.5M | — | 664B |
 | Compressed Solar (per panel, 24h) | — | 8 | 64 | — | 512 | 4k | 32k | 262k | 2M | 16M | — |
 | Solar Tower → XLST (max rings) | — | — | — | 40k | — | — | — | 78k | 110k | — | — |
-| Fusion → XLPT (per turbine) | — | — | — | — | — | 3.9M | — | — | 13.2M | — | — |
-| Fusion → EHE → XLST (per reactor) | — | — | — | — | — | 390k | — | — | 91M | — | — |
+| Fusion → XLPT (per turbine) | — | — | — | — | — | — | 3.9M | — | — | — | 13.2M |
+| Fusion → EHE → XLST (per reactor) | — | — | — | — | — | 390k | — | — | — | — | 907k |
 | SLAM / Dyson Swarm | — | — | — | — | — | — | — | — | — | — | 50T / 100B |
 
 Notes:
@@ -1239,13 +1239,13 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | LNR MkV (base) | 399,576,000 | UMV | 655.36M EU | 684.94M EU/mL |
 | LNR MkVI (base) | 2,077,795,200 | UXV | 655.36M EU | 5.88G EU/mL |
 | LNR MkVI (×5 coolant ×64 booster) | ~664,000,000,000 | UXV | 655.36M EU | 5.88G EU/mL |
-| Fusion Reactor (D+T) → XLPT (He Plasma, Manyullyn) | 244,125/LPT; ~3.9M/XLPT | UIV | 2.45G EU (27.99M Fusion Mk I + 2.38G XLPT + 40M startup) | free (D+T via PGS) |
-| Fusion Reactor (D+T) → EHE (73.7 mB Dense SC/mB He) → XLST (Trinium 135%) | ~390k EU/t per D+T reactor | UIV | 141.58M EU (27.99M Fusion Mk I + 53.30M EHE + 20.29M XLST + 40M startup) | free (D+T via PGS) |
+| Fusion Reactor (D+T) → XLPT (He Plasma, Manyullyn) | 244,125/LPT; ~3.9M/XLPT | ZPM | 2.45G EU (27.99M Fusion Mk I + 2.38G XLPT + 40M startup) | free (D+T via PGS) |
+| Fusion Reactor (D+T) → EHE (73.7 mB Dense SC/mB He) → XLST (Trinium 135%) | ~390k EU/t per D+T reactor | LuV | 141.58M EU (27.99M Fusion Mk I + 53.30M EHE + 20.29M XLST + 40M startup) | free (D+T via PGS) |
 | Fusion Reactor (D+T) → EHE → XLST (Shirabon 315%, endgame) | ~907k EU/t per D+T reactor | UIV | 141.58M EU (same) | free (D+T via PGS) |
-| Plasma Generator Mk I (He plasma, D+He3 fusion) | 2,048 | UIV | 202.03M EU (114.04M gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
-| Plasma Generator Mk II (He plasma, D+He3 fusion) | 8,192 | UIV | 238.86M EU (150.87M gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
-| Plasma Generator Mk III (He plasma, D+He3 fusion) | 32,768 | UIV | 756.91M EU (668.92M gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
-| Plasma Generator Mk IV (He plasma, D+He3 fusion) | 131,072 | UMV | 14.97G EU (14.88G gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
+| Plasma Generator Mk I (He plasma, D+He3 fusion) | 2,048 | LuV | 202.03M EU (114.04M gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
+| Plasma Generator Mk II (He plasma, D+He3 fusion) | 8,192 | LuV | 238.86M EU (150.87M gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
+| Plasma Generator Mk III (He plasma, D+He3 fusion) | 32,768 | LuV | 756.91M EU (668.92M gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
+| Plasma Generator Mk IV (He plasma, D+He3 fusion) | 131,072 | UHV | 14.97G EU (14.88G gen + 27.99M Fusion Mk I + 60M startup) | free (He plasma via D+He3, from PGS) |
 | Ultimate Pocket Sun (Celestial Tungsten plasma, 90%) | 576,000 per cell | UHV | 22.60G EU | 2.13G EU/mL |
 | Solar Tower → SH steam → XLST (Infinity 225%, max rings) | ~78,000 | UV | 110.15M EU | free (solar) |
 | Septuple-Compressed Solar (fire/water infused, 24h) | 2,097,152 | UHV | 3.36T EU | free (solar) |
@@ -1353,8 +1353,12 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | Compact Kinetic Generator (High) | ~4,096 | ★★☆☆☆ | ★★★★★ | ~16,384 | 65,536* | 262,144* |
 | Lightning Rod II (~160k avg) | ~160,000 | ★★★☆☆ | ★★★★★ | ~185,000 | — | — |
 | DEHP + Duranium XLST (Direct Steam) | 337,440 | ★★☆☆☆ | ★★★★★ | 337,440* | 337,440* | 337,440* |
+| Fusion (D+T) → EHE → XLST (Trinium) | ~390,000/reactor | ★★☆☆☆ | ★★★★★ | ~477,000 | ~650,000 | ~795,000 |
+| Plasma Generator Mk I | 2,048 | ★★☆☆☆ | ★★★★★ | 8,192 | 32,768 | 131,072 |
+| Plasma Generator Mk II | 8,192 | ★★☆☆☆ | ★★★★★ | 32,768 | 32,768* | 131,072 |
+| Plasma Generator Mk III | 32,768 | ★★☆☆☆ | ★★★★★ | 32,768* | 32,768* | 131,072 |
 
-**Quad-Compressed Solar**: 8× per step → Quint (ZPM, 32k) → Sext (UV, 262k) → Sept (UHV, 2M). **Turbo Geothermal**: 4× to Vulcan (ZPM); caps there. **CKG High→Extreme (ZPM)**; UV/UHV = ×4 spam. **Lightning Rod II→III (ZPM)**; both cap at ZPM (no UV rod). **DEHP**: output fixed to Duranium XLST optimal flow (25,600 L/t); upgrade = swap rotor material (see §8b, §24); free Distilled Water.
+**Quad-Compressed Solar**: 8× per step → Quint (ZPM, 32k) → Sext (UV, 262k) → Sept (UHV, 2M). **Turbo Geothermal**: 4× to Vulcan (ZPM); caps there. **CKG High→Extreme (ZPM)**; UV/UHV = ×4 spam. **Lightning Rod II→III (ZPM)**; both cap at ZPM (no UV rod). **DEHP**: output fixed to Duranium XLST optimal flow (25,600 L/t); upgrade = swap rotor material (see §8b, §24); free Distilled Water. **Fusion D+T XLST**: Fusion Mk I is LuV (controller); D+T threshold=40M fits Mk I; ZPM = Duranium blades (165%, LuV-accessible); UV = Infinity blades (~650k); UHV = Transcendent Metal blades (~795k); UIV = Shirabon (~907k, see UIV section). **Plasma Gen Mk I–III**: all LuV min-tier (Fusion Mk I controller bottleneck); Mk I (EV build), Mk II (IV build), Mk III (LuV build) — upgrade within same tier; UHV = Mk IV. Mk I ZPM→Mk II, UV→Mk III (within LuV range); Mk III ZPM/UV = ×4 spam until Mk IV (UHV).
 
 ---
 
@@ -1372,8 +1376,9 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | IC2 Vacuum Reactor (MOX) | ~108,000 | ★★★☆☆ | ★★★☆☆ | ~4,979,200 | 19,916,800* | 19,916,800* |
 | IC2 Vacuum Reactor (The Core) | ~4,979,200 | ★★☆☆☆ | ★★★★☆ | 19,916,800* | 19,916,800* | 19,916,800* |
 | LNR MkI | 975,000 | ★★☆☆☆ | ★★★☆☆ | 2,300,000 | 9,511,000 | 38,044,000* |
+| Fusion (D+T) → XLPT (Manyullyn) | ~3,900,000/XLPT | ★☆☆☆☆ | ★★★★★ | 3,900,000* | 3,900,000* | 3,900,000* |
 
-**Vulcan Geothermal**: caps at ZPM; free lava from Nether. **CKG Extreme**: final CKG tier; all beyond = ×4 spam. **Quintuple-Compressed Solar**: 8× → Sextuple (UV, 262k); UEV = ×4 Septuple (no UEV compressed solar). **Lightning Rod III**: all rods cap at ZPM. **LFTR**: single 285.56M EU controller; fuel swap in same machine gives 8k→32k→131k EU/t with no hardware change. **IC2 Vacuum**: same 110.21M EU controller; MOX→The Core is a rod upgrade, not machine upgrade. **LNR MkI**: ZPM-accessible (Fusion Mk II required: fusion_threshold 320M > Mk I max; Fusion Mk II needs Superdense Europium Plate via HIP [ZPM]); UV upgrade = MkII (2.3M); UHV upgrade = MkIII (9.5M); UEV = ×4 MkIII spam. LFTR and IC2 Vacuum are ZPM's best ROI sources.
+**Vulcan Geothermal**: caps at ZPM; free lava from Nether. **CKG Extreme**: final CKG tier; all beyond = ×4 spam. **Quintuple-Compressed Solar**: 8× → Sextuple (UV, 262k); UEV = ×4 Septuple (no UEV compressed solar). **Lightning Rod III**: all rods cap at ZPM. **LFTR**: single 285.56M EU controller; fuel swap in same machine gives 8k→32k→131k EU/t with no hardware change. **IC2 Vacuum**: same 110.21M EU controller; MOX→The Core is a rod upgrade, not machine upgrade. **LNR MkI**: ZPM-accessible (Fusion Mk II required: fusion_threshold 320M > Mk I max; Fusion Mk II needs Superdense Europium Plate via HIP [ZPM]); UV upgrade = MkII (2.3M); UHV upgrade = MkIII (9.5M); UEV = ×4 MkIII spam. **Fusion D+T XLPT (Manyullyn)**: XLPT (XL Turbo Plasma Turbine) is ZPM to build; Manyullyn blades MV; ~3.9M/XLPT (≡ 16 LPT); no named blade upgrade until UV Fusion (UMV, ~13.2M, see UMV section); all columns ×4 spam. LFTR and IC2 Vacuum are ZPM's best ROI sources.
 
 ---
 
@@ -1397,8 +1402,9 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 | Septuple-Compressed Solar | 2,097,152 | ★☆☆☆☆ | ★★★★★ | 8,388,608* | 8,388,608* | 16,777,216 |
 | Solar Tower → XLST (Shirabon 315%, max rings) | ~110,000 | ★★☆☆☆ | ★★★★★ | 440,000* | 440,000* | 440,000* |
 | Ultimate Pocket Sun | 576,000/cell | ★★☆☆☆ | ★★☆☆☆ | 2,304,000* | 2,304,000* | 2,304,000* |
+| Plasma Generator Mk IV | 131,072 | ★★☆☆☆ | ★★★★★ | 524,288* | 524,288* | 524,288* |
 
-**LNR MkIII**: UHV-accessible via NFR (no overclock); UEV = ×4 spam (no UEV LNR); UMV = MkIV (88.5M EU/t). **Septuple-Compressed Solar**: UEV = ×4 Sept spam (Octuple needs UMV); UMV = Octuple (16.8M). **Solar Tower Shirabon**: final blade tier — all ×4 spam beyond. **Ultimate Pocket Sun**: Celestial Tungsten plasma fuel (2.13G EU/mL); no tier upgrade — spam only.
+**LNR MkIII**: UHV-accessible via NFR (no overclock); UEV = ×4 spam (no UEV LNR); UMV = MkIV (88.5M EU/t). **Septuple-Compressed Solar**: UEV = ×4 Sept spam (Octuple needs UMV); UMV = Octuple (16.8M). **Solar Tower Shirabon**: final blade tier — all ×4 spam beyond. **Ultimate Pocket Sun**: Celestial Tungsten plasma fuel (2.13G EU/mL); no tier upgrade — spam only. **Plasma Gen Mk IV**: UHV to build; final plasma gen tier; all scaling = ×4 spam.
 
 ---
 
@@ -1406,16 +1412,11 @@ Tier `—` = tier undetermined (free ambient source or insufficient data).
 
 | Generator | EU/t | Spam | ROI | UMV | UXV |
 |-----------|-----:|:---:|:---:|---:|---:|
-| Fusion (D+T) → XLPT (Manyullyn) | ~3,900,000/XLPT | ★☆☆☆☆ | ★★★★★ | ~13,200,000 | — |
-| Fusion (D+T) → EHE → XLST (Trinium) | ~390,000/reactor | ★★☆☆☆ | ★★★★★ | ~128,000,000 | — |
 | Fusion (D+T) → EHE → XLST (Shirabon) | ~907,000/reactor | ★★☆☆☆ | ★★★★★ | ~128,000,000 | — |
-| Plasma Generator Mk I | 2,048 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
-| Plasma Generator Mk II | 8,192 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
-| Plasma Generator Mk III | 32,768 | ★★☆☆☆ | ★★★★★ | 131,072 | 524,288* |
 | SLAM (1,000 L antimatter, Copper) | 50,000,000,000,000+ | ★☆☆☆☆ | ★★★★☆ | super-linear | super-linear |
 | Dyson Swarm (10,000 modules) | ~100,000,000,000 | ★☆☆☆☆ | ★★★★★ | scales linearly | scales linearly |
 
-Fusion Mk I (UIV build) is the infrastructure gate: once built, D+T plasma from PGS is free. **Fusion → XLPT**: highest raw EU/t per turbine; UMV = UV Fusion (~13.2M). **Fusion → EHE → XLST**: lower setup cost; Trinium (UIV) → Shirabon blade upgrade in same reactor (UIV-accessible); UMV for both = UV Fusion + Shirabon (~128M). **Plasma Gen Mk I–III**: all UIV min-tier (same fusion prerequisite); Mk IV requires UMV. **SLAM**: output = `Efficiency × 1e12 × Antimatter_L^E` (super-linear with volume); 1,000 L Copper → ~50T EU/t; structure blocked by Prismatic Naquadah. **Dyson Swarm**: linear with module count; ~100B at 10,000 modules.
+Fusion Mk I (LuV build) enables D+T plasma; Shirabon blades (UIV) are the gate here. **Fusion D+T → EHE → XLST (Shirabon)**: blade upgrade from Trinium (LuV) to Shirabon (UIV); UMV = UV Fusion + Shirabon (~128M, see UMV). **SLAM**: output = `Efficiency × 1e12 × Antimatter_L^E` (super-linear with volume); 1,000 L Copper → ~50T EU/t; structure blocked by Prismatic Naquadah. **Dyson Swarm**: linear with module count; ~100B at 10,000 modules.
 
 ---
 
@@ -1425,13 +1426,12 @@ Fusion Mk I (UIV build) is the infrastructure gate: once built, D+T plasma from 
 |-----------|-----:|:---:|:---:|---:|
 | LNR MkIV | 88,540,000 | ★★☆☆☆ | ★★★☆☆ | 399,576,000 |
 | LNR MkV | 399,576,000 | ★★☆☆☆ | ★★★☆☆ | 2,077,795,200 |
-| Plasma Generator Mk IV | 131,072 | ★★☆☆☆ | ★★★★★ | 524,288* |
 | UV Fusion → XLPT (CT Plasma, Infinity Cat.) | ~13,200,000/XLPT | ★☆☆☆☆ | — | — |
 | UV Fusion → EHE → XLST (Infinity 225%) | ~91,000,000/reactor | ★☆☆☆☆ | — | — |
 | UV Fusion → EHE → XLST (Shirabon 315%) | ~128,000,000/reactor | ★☆☆☆☆ | — | — |
 | Octuple-Compressed Solar | 16,777,216 | ★☆☆☆☆ | ★★★★★ | 67,108,864* |
 
-**LNR MkIV→MkV**: same controller (655M EU), fuel chain only cost; MkV→MkVI at UXV. **Plasma Gen Mk IV**: final plasma gen tier; UXV = ×4 spam. **UV Fusion**: Tartarite input has no DB path — fuel ROI unquantifiable; listed for completeness. **Octuple-Compressed Solar**: 44.21T EU build; UXV = ×4 spam (no UXV compressed solar).
+**LNR MkIV→MkV**: same controller (655M EU), fuel chain only cost; MkV→MkVI at UXV. **UV Fusion**: Tartarite input has no DB path — fuel ROI unquantifiable; listed for completeness. **Octuple-Compressed Solar**: 44.21T EU build; UXV = ×4 spam (no UXV compressed solar).
 
 ---
 
