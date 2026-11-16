@@ -137,8 +137,9 @@ def iso(build: Build, *, view: str = "se", scale: int = 16, palette: Palette | N
     sprites: dict = {}
     if frame is not None:
         pts = []
-        for x in (frame[0][0], frame[1][0]):
-            for z in (frame[0][2], frame[1][2]):
+        for fx in (frame[0][0], frame[1][0]):
+            for fz in (frame[0][2], frame[1][2]):
+                x, z = fx, fz
                 for _ in range(turns):
                     x, z = -z, x
                 pts.append((x, z))
