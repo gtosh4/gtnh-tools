@@ -36,6 +36,8 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 
 **`eu-cost` flags**: `--depth N` (default 3), `--why` (diagnose blocked paths), `--min-tier` (find lowest peak-tier path; break ties with lowest EU cost)
 
+**`eu-cost` graph rules**: Thaumcraft aspects (`thaumcraftneiplugin~Aspect` in 2.8, `i~aspectrecipeindex~aspect~…` in 2.9) are free inputs. NEI display pages that show a whole chain or a structure as one 1-EU recipe are excluded (`DISPLAY_ONLY_TYPES` in `src/lib.rs`: High Temperature Gas Reactor, Foundry Module Components, Godforge Upgrades). Metadata tier gates (`metadata_tier_min`): `fusion_threshold`, `compression_tier`, `algae_pond_tier` (Algae Pond casing tier = voltage tier). The `.eucache` is rebuilt when the DB or the `gtnh` binary changes.
+
 **`uu-cost` flags**: `--depth N` (default 3)
 
 ---
@@ -105,13 +107,13 @@ Use the recipe's `[TIER]` to determine required machine tier — not component n
 | Naquadah | 7,201 | UV |
 | Naquadah Alloy | 8,101 | UEV |
 | Trinium | 9,001 | ZPM (recipe tier; full chain likely higher) |
-| Electrum Flux | 9,901 | UV (recipe tier; full chain likely higher) |
+| Fluxed Electrum (2.8: Electrum Flux) | 9,901 | UV (recipe tier; full chain likely higher) |
 | Awakened Draconium | 10,801 | UHV (recipe tier) |
 | Infinity | 11,701 | UEV (Assemblyline) |
 | Hypogen | 12,601 | UIV (Assemblyline) |
 | Eternal | 13,501 | UMV (Assemblyline) |
 
-"Craft tier" = peak tier shown in `eu-cost` header when unblocked; `eu-cost --min-tier` gives the lowest-tier reachable path. For Trinium and Electrum Flux the full ingredient chains are partially blocked; treat ZPM/UV as a floor.
+"Craft tier" = peak tier shown in `eu-cost` header when unblocked; `eu-cost --min-tier` gives the lowest-tier reachable path. For Trinium and Fluxed Electrum the full ingredient chains are partially blocked; treat ZPM/UV as a floor.
 
 For recipes with `coil_heat ≤ 3601` the coil is never the bottleneck (Nichrome is EV, same as most early EBF recipes). For `coil_heat > 3601`, check whether the coil's craft tier exceeds the recipe's voltage tier.
 
@@ -156,6 +158,6 @@ Building toolkit (`gtnhbuild/`, Python, needs Pillow): scripts in `builds/*.py` 
 - Extreme Industrial Greenhouse — non-IC2 crops ([wiki](https://wiki.gtnewhorizons.com/wiki/Extreme_Industrial_Greenhouse))
 - Planetary Gas Siphon
 - Bees
-- Extreme Industrial Greenhouse — IC2 crops ([crop list](https://wiki.gtnewhorizons.com/wiki/IC2_Crops_List))
+- CropsNH crops (replaced the IC2 crop mods in 2.9; `Crops` recipes, see Recipe Output Format)
 
 When answering "best way to source X": enumerate what **each** source produces first, then trace forward to X. Do not stop at obvious inputs (water, air) — EIG crops and EEC mob drops may yield better routes.

@@ -111,7 +111,7 @@ pub fn tier_rank_u8(t: &str) -> u8 {
 
 /// Minimum tier required by metadata constraints that the recipe-voltage tag does not capture.
 ///
-/// Two keys are handled:
+/// Three keys are handled:
 ///
 /// * `fusion_threshold` — the EU a Fusion Reactor must have stored before the reaction starts.
 ///   The three standard GT Fusion Reactor marks have caps of 160 M, 360 M, and 560 M EU.
@@ -122,6 +122,9 @@ pub fn tier_rank_u8(t: &str) -> u8 {
 /// * `compression_tier` — marks that a recipe requires a specialised compressor rather than
 ///   the standard GT Compressor.  Tier 1 = Hot Isostatic Pressurization (HIP) unit, first
 ///   accessible at ZPM.  Tier 2 = higher-tier exotic compressor, first accessible at UHV.
+///
+/// * `algae_pond_tier` (2.9+) — the Algae Pond's recipes are ULV and input-free; each needs a
+///   pond built on machine casings of at least that tier (casing meta = voltage tier index).
 pub fn metadata_tier_min(gt: &GtRecipe) -> u8 {
     let mut min = 0u8;
     for m in &gt.metadata {
@@ -137,6 +140,7 @@ pub fn metadata_tier_min(gt: &GtRecipe) -> u8 {
                     tier_rank_u8("UHV") // FusionTech MK IV+
                 }
             }
+            "algae_pond_tier" => (m.value.clamp(0, i64::from(tier_rank_u8("MAX")))) as u8,
             "compression_tier" => match m.value {
                 1 => tier_rank_u8("ZPM"), // HIP (Hot Isostatic Pressurization)
                 2 => tier_rank_u8("UHV"), // ultra-high-pressure exotic compressor
@@ -219,6 +223,20 @@ pub struct CropInfo {
 pub const CROPS_RECIPE_TYPE: &str = "Crops";
 /// Input slot of a `Crops` recipe holding the sub-soil blocks (0 = seed, 1 = soils).
 pub const CROP_SUBSOIL_SLOT: i32 = 2;
+
+/// Recipe types (name prefixes) that are NEI displays, not processes a machine runs: each shows
+/// a multi-step chain or a structure's parts as one 1-EU, 1-tick recipe, which would hand
+/// `eu-cost` free products (e.g. the HTGR page turns 2 silver dust into U-235 for 1 EU).
+pub const DISPLAY_ONLY_TYPES: &[&str] = &[
+    "High Temperature Gas Reactor", // fuel chain, 2.9+
+    "Foundry Module Components",    // casings → module casing, 2.9+
+    "Godforge Upgrades",            // module unlocks
+];
+
+/// Thaumcraft aspect pseudo-items: Thaumcraft NEI Plugin ids (2.8) or AspectRecipeIndex ids (2.9+).
+pub fn is_aspect(goods_id: &str) -> bool {
+    goods_id.contains("thaumcraftneiplugin~Aspect") || goods_id.starts_with("i~aspectrecipeindex~aspect~")
+}
 
 // ===== Repository =====
 
@@ -1691,13 +1709,14 @@ impl Repository {
 
         for (output_goods_id, recipes) in cache.iter() {
             for recipe in recipes {
-                // Filter recycling / recycle-metadata recipes.
+                // Filter recycling / recycle-metadata recipes, and NEI pages that only
+                // display a process as one 1-EU recipe (DISPLAY_ONLY_TYPES).
                 // Canner and Fluid Canner recipes are legitimate crafting steps;
                 // cycles (fluid + cell → fluid cell → fluid) are broken naturally
                 // by Dijkstra's settled-node check.
                 let type_name = recipe.recipe_type_name.as_deref().unwrap_or("");
                 let is_utility = type_name.starts_with("Recycler ")
-                    || type_name.starts_with("Recycler ")
+                    || DISPLAY_ONLY_TYPES.iter().any(|t| type_name.starts_with(t))
                     || recipe.gt_recipe.as_ref().map_or(false, |gt| {
                         gt.metadata
                             .iter()
@@ -1742,11 +1761,7 @@ impl Repository {
                                 && io.amount > 0
                                 // Thaumcraft Aspects are free ambient resources — treat
                                 // them like bee queens (zero-cost, infinite supply).
-                                && !io
-                                    .goods_id
-                                    .as_deref()
-                                    .unwrap_or("")
-                                    .contains("thaumcraftneiplugin~Aspect")
+                                && !is_aspect(io.goods_id.as_deref().unwrap_or(""))
                         })
                         .collect()
                 };

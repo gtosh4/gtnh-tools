@@ -1312,7 +1312,7 @@ fn peak_voltage_tier(
 ) -> Option<String> {
     const TIER_ORDER: &[&str] = &[
         "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
-        "UHV", "UEV", "UIV", "UMV", "UXV",
+        "UHV", "UEV", "UIV", "UMV", "UXV", "MAX",
     ];
     fn tier_rank(t: &str) -> usize {
         TIER_ORDER.iter().position(|&s| s == t).unwrap_or(0)
@@ -1343,7 +1343,7 @@ fn peak_voltage_tier(
     } else {
         const TIER_NAMES: &[&str] = &[
             "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV",
-            "UHV", "UEV", "UIV", "UMV", "UXV",
+            "UHV", "UEV", "UIV", "UMV", "UXV", "MAX",
         ];
         TIER_NAMES.get(*metadata_tier as usize).unwrap_or(&"ULV").to_string()
     };
@@ -1485,11 +1485,21 @@ fn file_mtime_secs(path: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// mtime of the running `gtnh` binary: the graph and Dijkstra rules live in code, so a rebuild
+/// must invalidate the cache as much as a new DB does.
+fn exe_mtime_secs() -> u64 {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(file_mtime_secs))
+        .unwrap_or(0)
+}
+
 // Separate owned (for deserialize) and borrowed (for serialize) cache types so we
 // can serialize without cloning the graph.
 #[derive(Deserialize)]
 struct EuCache {
     db_mtime_secs: u64,
+    exe_mtime_secs: u64,
     eu_graph: EuGraph,
     dijk: DijkState,
 }
@@ -1497,18 +1507,18 @@ struct EuCache {
 #[derive(Serialize)]
 struct EuCacheRef<'a> {
     db_mtime_secs: u64,
+    exe_mtime_secs: u64,
     eu_graph: &'a EuGraph,
     dijk: &'a DijkState,
 }
 
 /// Try to load a valid EU cache from `cache_path` for the DB at `db_path`.
-/// Returns `None` if the cache is absent, stale, or corrupt.
+/// Returns `None` if the cache is absent, stale (DB or binary newer), or corrupt.
 fn load_eu_cache(cache_path: &str, db_path: &str) -> Option<(EuGraph, DijkState)> {
-    let db_mtime = file_mtime_secs(db_path);
     let bytes = std::fs::read(cache_path).ok()?;
     let cache: EuCache = bincode::deserialize(&bytes).ok()?;
-    if cache.db_mtime_secs != db_mtime {
-        return None; // DB has been updated; cache is stale
+    if cache.db_mtime_secs != file_mtime_secs(db_path) || cache.exe_mtime_secs != exe_mtime_secs() {
+        return None;
     }
     Some((cache.eu_graph, cache.dijk))
 }
@@ -1518,6 +1528,7 @@ fn load_eu_cache(cache_path: &str, db_path: &str) -> Option<(EuGraph, DijkState)
 fn save_eu_cache(cache_path: &str, db_path: &str, eu_graph: &EuGraph, dijk: &DijkState) {
     let ser = EuCacheRef {
         db_mtime_secs: file_mtime_secs(db_path),
+        exe_mtime_secs: exe_mtime_secs(),
         eu_graph,
         dijk,
     };
