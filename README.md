@@ -59,6 +59,7 @@ Run from the directory holding `nesql.db` (or pass `--data path/to/nesql.db`):
 ./gtnh recipes-of-type "Blast Furnace" --limit 10
 ./gtnh eu-cost i:gregtech:gt.blockcasings5:4   # min EU to make 1, full chain
 ./gtnh eu-cost i:gregtech:gt.blockcasings5:4 --min-tier   # lowest peak voltage tier
+./gtnh uu-cost i:minecraft:diamond:0           # min UU-Matter to make 1
 ./gtnh --json recipes-for f:gregtech:hydrogen | jq '.[0]'
 ```
 
@@ -67,8 +68,9 @@ Ids: `i:mod:name:meta` items, `f:name` fluids, `o:oreDictName` ore dicts, `r~…
 `eu-cost` traces every recipe back to free or seeded sources (water and air hatches, ore veins with
 their rocket tiers, bees, CropsNH crops, Extreme Entity Crusher drops, …) and applies tier gates
 the voltage tag alone misses (fusion EU thresholds, special compressors, Algae Pond casings, a
-crop's sub-soil block). The first run builds a cache (`nesql.db.eucache`, ~2½ minutes); it is
-rebuilt whenever the database or the binary changes.
+crop's sub-soil block). `uu-cost` uses the same graph with UU-Matter as the only source. The first
+run builds a cache (`nesql.db.eucache`, ~10 s) and, once, adds lookup indexes to `nesql.db`; the
+cache is rebuilt whenever the database or the binary changes.
 
 [`CLAUDE.md`](CLAUDE.md) documents every subcommand, the output format, metadata keys, voltage
 tiers, coil requirements and the graph rules in detail.

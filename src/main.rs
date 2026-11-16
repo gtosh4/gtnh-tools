@@ -495,144 +495,72 @@ pub struct UuInput {
     pub result: UuResult,
 }
 
-/// Recursively find the minimum UU-Matter cost to produce 1 unit of `goods_id`.
-///
-/// Uses path-based cycle detection: items already being computed in the current
-/// call chain are skipped, preventing both infinite loops and the negative-cycle
-/// trap (where a cyclic conversion could drive costs to 0). Successes are
-/// memoized; failures are tracked in `impossible`. Because a cycle-blocked
-/// failure may be a false negative (the item IS reachable via a non-cyclic
-/// path), the caller should run multiple passes (clearing `impossible` but
-/// keeping successful memos) until the result converges.
-fn compute_uu_cost(
+/// Rebuild the UU-Matter result tree for `goods_id` from `run_uu_dijkstra`'s state. Nodes at the
+/// depth limit keep their input list, with those inputs' own inputs left empty, so the printer
+/// still recognises direct replicator recipes.
+fn build_uu_result(
     goods_id: &str,
-    path: &mut HashSet<String>,
-    memo: &mut HashMap<String, UuResult>,
-    impossible: &mut HashSet<String>,
+    dijk: &DijkState,
+    eu_graph: &EuGraph,
     repo: &Repository,
+    max_depth: usize,
 ) -> Option<UuResult> {
-    if goods_id == UU_MATTER_ID {
-        return Some(UuResult {
-            uu_per_unit: 1.0,
-            path: UuPath::Base,
+    let &goods_ni = eu_graph.goods_idx.get(goods_id)?;
+    let &(cost, via_recipe) = dijk.settled.get(&goods_ni)?;
+    let Some(recipe_ni) = via_recipe else {
+        return Some(UuResult { uu_per_unit: cost, path: UuPath::Base }); // only UU-Matter is seeded
+    };
+    let EuGraphNode::Recipe { id, recipe_type, output_amount, num_slots, .. } = &eu_graph.g[recipe_ni]
+    else {
+        return None;
+    };
+
+    let mut inputs = Vec::new();
+    for slot in 0..*num_slots {
+        let Some(&chosen_ni) = dijk.slot_chosen.get(&(recipe_ni, slot)) else {
+            continue;
+        };
+        let EuGraphNode::Goods(chosen_id) = &eu_graph.g[chosen_ni] else {
+            continue;
+        };
+        let amount = eu_graph.slot_amounts.get(&(recipe_ni, slot)).copied().unwrap_or(0.0);
+        let result = if max_depth == 0 {
+            let &(sub_cost, sub_via) = dijk.settled.get(&chosen_ni)?;
+            UuResult {
+                uu_per_unit: sub_cost,
+                path: match sub_via {
+                    None => UuPath::Base,
+                    Some(r) => UuPath::Recipe {
+                        recipe_id: match &eu_graph.g[r] {
+                            EuGraphNode::Recipe { id, .. } => id.clone(),
+                            _ => String::new(),
+                        },
+                        recipe_type: String::new(),
+                        output_amount: 0.0,
+                        inputs: Vec::new(),
+                    },
+                },
+            }
+        } else {
+            build_uu_result(chosen_id, dijk, eu_graph, repo, max_depth - 1)?
+        };
+        inputs.push(UuInput {
+            name: repo.name_of(chosen_id).unwrap_or_else(|_| chosen_id.clone()),
+            goods_id: chosen_id.clone(),
+            amount,
+            result,
         });
     }
-    if let Some(cached) = memo.get(goods_id) {
-        return Some(cached.clone());
-    }
-    if impossible.contains(goods_id) {
-        return None;
-    }
-    if path.contains(goods_id) {
-        return None; // cycle
-    }
-    path.insert(goods_id.to_string());
 
-    let recipes = repo.recipes_producing(goods_id).unwrap_or_default();
-    let mut best: Option<UuResult> = None;
-
-    'recipe: for recipe in &recipes {
-        if is_canning_or_recycling(recipe) {
-            continue;
-        }
-        let output_io = recipe
-            .outputs()
-            .find(|io| io.goods_id.as_deref() == Some(goods_id));
-        let Some(output_io) = output_io else { continue };
-        if output_io.probability <= 0.0 {
-            continue;
-        }
-        if !recipe.inputs().any(|io| io.amount > 0) {
-            continue;
-        }
-        let output_amount = output_io.amount as f64 * output_io.probability as f64;
-
-        let mut total_uu = 0.0;
-        let mut inputs: Vec<UuInput> = Vec::new();
-
-        for input_io in recipe.inputs() {
-            let Some(input_id) = &input_io.goods_id else {
-                continue;
-            };
-            let amount = input_io.amount as f64;
-            if amount == 0.0 {
-                continue;
-            }
-
-            let (resolved_id, sub_result) = if input_io.io_type == RecipeIoType::OreDictInput {
-                let members = repo.ore_dict_item_ids(input_id).unwrap_or_default();
-
-                // Check already-memoized members first (O(1)), then explore others.
-                let mut best_member: Option<(String, UuResult)> = None;
-                for mid in &members {
-                    if let Some(r) = memo.get(mid.as_str()) {
-                        let r = r.clone();
-                        if best_member
-                            .as_ref()
-                            .map_or(true, |(_, br)| r.uu_per_unit < br.uu_per_unit)
-                        {
-                            best_member = Some((mid.clone(), r));
-                        }
-                    }
-                }
-                for mid in &members {
-                    if memo.contains_key(mid.as_str()) || impossible.contains(mid.as_str()) {
-                        continue;
-                    }
-                    if let Some(r) = compute_uu_cost(mid, path, memo, impossible, repo) {
-                        if best_member
-                            .as_ref()
-                            .map_or(true, |(_, br)| r.uu_per_unit < br.uu_per_unit)
-                        {
-                            best_member = Some((mid.clone(), r));
-                        }
-                    }
-                }
-                match best_member {
-                    None => continue 'recipe,
-                    Some(bm) => bm,
-                }
-            } else {
-                match compute_uu_cost(input_id, path, memo, impossible, repo) {
-                    None => continue 'recipe,
-                    Some(r) => (input_id.clone(), r),
-                }
-            };
-
-            total_uu += amount * sub_result.uu_per_unit;
-            let name = repo
-                .name_of(&resolved_id)
-                .unwrap_or_else(|_| resolved_id.clone());
-            inputs.push(UuInput {
-                name,
-                goods_id: resolved_id,
-                amount,
-                result: sub_result,
-            });
-        }
-
-        let uu_per_unit = total_uu / output_amount;
-        if best.as_ref().map_or(true, |b| uu_per_unit < b.uu_per_unit) {
-            best = Some(UuResult {
-                uu_per_unit,
-                path: UuPath::Recipe {
-                    recipe_id: recipe.id.clone(),
-                    recipe_type: recipe.recipe_type_name.clone().unwrap_or_default(),
-                    output_amount,
-                    inputs,
-                },
-            });
-        }
-    }
-
-    path.remove(goods_id);
-
-    if let Some(ref r) = best {
-        memo.insert(goods_id.to_string(), r.clone());
-    } else {
-        impossible.insert(goods_id.to_string());
-    }
-    best
+    Some(UuResult {
+        uu_per_unit: cost,
+        path: UuPath::Recipe {
+            recipe_id: id.clone(),
+            recipe_type: recipe_type.clone(),
+            output_amount: *output_amount,
+            inputs,
+        },
+    })
 }
 
 // ===== EU cost solver =====
@@ -902,11 +830,32 @@ fn add_eec_recipes(eu_graph: &mut EuGraph, repo: &Repository) {
 /// Since all EU values are ≥ 0, standard Dijkstra correctness applies.
 /// For ore-dict slots, the first (cheapest) member to be settled wins.
 fn run_eu_dijkstra(eu_graph: &EuGraph) -> DijkState {
+    run_cost_dijkstra(eu_graph, &eu_graph.seed_costs, false)
+}
+
+/// UU-Matter cost: the same search over the EU graph, seeded only with UU-Matter at 1 UU per mB.
+/// Recipes add nothing of their own, and only recipes that consume an input fire: bee products,
+/// crops, siphons and the synthetic infinite sources yield nothing here, so every good is traced
+/// back to UU-Matter. Settle-once order keeps every derivation acyclic (a good is only made from
+/// goods settled before it). Re-relaxing to a fixpoint instead collapses whole families to 0 UU
+/// through net-gain loops such as the Crucible's 1 nugget → 3 nuggets (aspects are free here).
+fn run_uu_dijkstra(eu_graph: &EuGraph) -> DijkState {
+    let seeds: HashMap<NodeIndex, f64> =
+        eu_graph.goods_idx.get(UU_MATTER_ID).map(|&ni| (ni, 1.0)).into_iter().collect();
+    run_cost_dijkstra(eu_graph, &seeds, true)
+}
+
+/// Shared by the EU and UU searches. `uu_mode`: recipe EU is ignored and recipes without a
+/// consumed input (no slots, or only amount-0 slots such as a crop's sub-soil) never fire.
+fn run_cost_dijkstra(eu_graph: &EuGraph, seeds: &HashMap<NodeIndex, f64>, uu_mode: bool) -> DijkState {
     let g = &eu_graph.g;
     let mut settled: HashMap<NodeIndex, (f64, Option<NodeIndex>)> = HashMap::new();
     let mut slot_chosen: HashMap<(NodeIndex, usize), NodeIndex> = HashMap::new();
     let mut remaining_slots: HashMap<NodeIndex, usize> = HashMap::new();
     let mut recipe_input_eu: HashMap<NodeIndex, f64> = HashMap::new();
+    let consumes = |recipe_ni: NodeIndex, num_slots: usize| {
+        (0..num_slots).any(|s| eu_graph.slot_amounts.get(&(recipe_ni, s)).copied().unwrap_or(0.0) > 0.0)
+    };
 
     // Min-heap: (Reverse(cost), goods_ni, via_recipe_ni).
     let mut pq: BinaryHeap<(Reverse<OrdF64>, NodeIndex, Option<NodeIndex>)> = BinaryHeap::new();
@@ -918,16 +867,16 @@ fn run_eu_dijkstra(eu_graph: &EuGraph) -> DijkState {
         }
     }
 
-    // Seed goods nodes from known infinite sources at their configured EU costs.
-    // Goods not listed in seed_costs are treated as unreachable (infinite cost).
-    for (&ni, &cost) in &eu_graph.seed_costs {
+    // Seed goods nodes from known infinite sources at their configured costs.
+    // Goods not listed in the seeds are treated as unreachable (infinite cost).
+    for (&ni, &cost) in seeds {
         pq.push((Reverse(OrdF64(cost)), ni, None));
     }
 
     // Fire zero-input recipe nodes immediately (Planetary Gas Siphon, Bee Products, …).
     // These have no Input edges so they are never triggered by goods settlement;
     // their output goods are pushed to the PQ at cost = recipe_eu / output_amount.
-    for ni in g.node_indices() {
+    for ni in g.node_indices().filter(|_| !uu_mode) {
         if let EuGraphNode::Recipe {
             eu, output_amount, ..
         } = &g[ni]
@@ -972,12 +921,16 @@ fn run_eu_dijkstra(eu_graph: &EuGraph) -> DijkState {
             if *rem == 0 {
                 // All slots settled → compute recipe cost and push output goods.
                 let EuGraphNode::Recipe {
-                    eu, output_amount, ..
+                    eu, output_amount, num_slots, ..
                 } = &g[recipe_ni]
                 else {
                     continue;
                 };
-                let recipe_cost = (*eu as f64 + recipe_input_eu[&recipe_ni]) / *output_amount;
+                if uu_mode && !consumes(recipe_ni, *num_slots) {
+                    continue;
+                }
+                let own = if uu_mode { 0.0 } else { *eu as f64 };
+                let recipe_cost = (own + recipe_input_eu[&recipe_ni]) / *output_amount;
                 for out_edge in g.edges_directed(recipe_ni, Direction::Outgoing) {
                     if matches!(out_edge.weight(), EuGraphEdge::Output) {
                         let output_ni = out_edge.target();
@@ -1535,6 +1488,26 @@ fn save_eu_cache(cache_path: &str, db_path: &str, eu_graph: &EuGraph, dijk: &Dij
     if let Ok(bytes) = bincode::serialize(&ser) {
         let _ = std::fs::write(cache_path, bytes);
     }
+}
+
+/// The EU graph (with seeds, infinite sources and EEC drops) and its min-EU Dijkstra state, from
+/// `<db>.eucache` when it is current, otherwise built and cached.
+fn load_eu_graph(db_path: &str, repo: &Repository) -> Result<(EuGraph, DijkState)> {
+    let cache_path = format!("{db_path}.eucache");
+    if let Some(cached) = load_eu_cache(&cache_path, db_path) {
+        eprintln!("Loaded EU cache.");
+        return Ok(cached);
+    }
+    eprintln!("Building EU cost graph...");
+    let mut g = repo.build_eu_graph()?;
+    eprintln!("Seeding infinite sources...");
+    populate_seed_costs(&mut g, repo);
+    add_infinite_source_recipes(&mut g);
+    add_eec_recipes(&mut g, repo);
+    eprintln!("Running Dijkstra...");
+    let d = run_eu_dijkstra(&g);
+    save_eu_cache(&cache_path, db_path, &g, &d);
+    Ok((g, d))
 }
 
 // ===== Graphviz DOT output =====
@@ -2233,26 +2206,10 @@ fn main() -> Result<()> {
                 None
             };
 
-            let cache_path = format!("{}.eucache", cli.data);
             let (eu_graph, dijk) = {
                 // Always load/build the EU graph; the cached DijkState is only reused for
                 // the default (unconstrained min-EU) mode.
-                let (mut g, cached_dijk) =
-                    if let Some(cached) = load_eu_cache(&cache_path, &cli.data) {
-                        eprintln!("Loaded EU cache.");
-                        cached
-                    } else {
-                        eprintln!("Building EU cost graph...");
-                        let mut g = repo.build_eu_graph()?;
-                        eprintln!("Seeding infinite sources...");
-                        populate_seed_costs(&mut g, &repo);
-                        add_infinite_source_recipes(&mut g);
-                        add_eec_recipes(&mut g, &repo);
-                        eprintln!("Running Dijkstra...");
-                        let d = run_eu_dijkstra(&g);
-                        save_eu_cache(&cache_path, &cli.data, &g, &d);
-                        (g, d)
-                    };
+                let (mut g, cached_dijk) = load_eu_graph(&cli.data, &repo)?;
                 // Always (re-)populate mining tiers: not stored in the cache.
                 populate_mining_tiers(&mut g, &repo);
                 let d = if *min_tier {
@@ -2311,34 +2268,10 @@ fn main() -> Result<()> {
             let db_id = to_db_id(id);
             let name = repo.name_of(&db_id)?;
 
-            eprintln!("Preloading recipe data...");
-            repo.preload_recipes_producing()?;
-
-            let mut path: HashSet<String> = HashSet::new();
-            let mut memo: HashMap<String, UuResult> = HashMap::new();
-            let mut impossible: HashSet<String> = HashSet::new();
-
-            // Iterative passes: each pass clears stale impossibles and evicts the target
-            // from memo so it is re-explored using the latest dependency memos.
-            // Items that were cycle-blocked in an earlier pass can now resolve.
-            // Repeat until the result stops improving.
-            let mut result = compute_uu_cost(&db_id, &mut path, &mut memo, &mut impossible, &repo);
-            loop {
-                impossible.clear();
-                path.clear();
-                memo.remove(&db_id);
-                let new_result =
-                    compute_uu_cost(&db_id, &mut path, &mut memo, &mut impossible, &repo);
-                let improved = match (&result, &new_result) {
-                    (None, Some(_)) => true,
-                    (Some(old), Some(new)) => new.uu_per_unit < old.uu_per_unit - 1e-9,
-                    _ => false,
-                };
-                result = new_result;
-                if !improved {
-                    break;
-                }
-            }
+            let (eu_graph, _) = load_eu_graph(&cli.data, &repo)?;
+            eprintln!("Running UU-Matter Dijkstra...");
+            let dijk = run_uu_dijkstra(&eu_graph);
+            let result = build_uu_result(&db_id, &dijk, &eu_graph, &repo, *depth);
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);

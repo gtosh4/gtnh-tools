@@ -38,7 +38,9 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 
 **`eu-cost` graph rules**: Thaumcraft aspects (`thaumcraftneiplugin~Aspect` in 2.8, `i~aspectrecipeindex~aspect~…` in 2.9) are free inputs. NEI display pages that show a whole chain or a structure as one 1-EU recipe are excluded (`DISPLAY_ONLY_TYPES` in `src/lib.rs`: High Temperature Gas Reactor, Foundry Module Components, Godforge Upgrades). Metadata tier gates (`metadata_tier_min`): `fusion_threshold`, `compression_tier`, `algae_pond_tier` (Algae Pond casing tier = voltage tier). The `.eucache` is rebuilt when the DB or the `gtnh` binary changes.
 
-**`uu-cost` flags**: `--depth N` (default 3)
+**`uu-cost` flags**: `--depth N` (default 3). It runs on the same graph as `eu-cost` (shares `.eucache`), seeded only with UU-Matter at 1 UU/mB: recipe EU is ignored, and recipes that consume nothing (bees, crops, siphons, ore veins, water/air) don't count, so every good is traced back to UU-Matter.
+
+**Indexes**: `Repository::open` adds missing lookup indexes to the DB once (`LOOKUP_INDEXES` in `src/lib.rs`). NESQL-Exporter's SQLite output only has Hibernate's FK indexes; without them per-item lookups scan whole tables (minutes instead of seconds). The DB must be writable the first time.
 
 ---
 

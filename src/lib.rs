@@ -2,7 +2,7 @@ use anyhow::Result;
 use petgraph::graph::{DiGraph, NodeIndex};
 use regex::Regex;
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{Connection, Error as SqlError, OptionalExtension, params};
+use rusqlite::{Connection, Error as SqlError, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -240,6 +240,48 @@ pub fn is_aspect(goods_id: &str) -> bool {
 
 // ===== Repository =====
 
+/// Lookup indexes the queries rely on (recipes by output, item-group members, GT recipe data,
+/// ore dicts by group, crops by recipe). Exports NESQL-Exporter writes straight to SQLite carry
+/// only Hibernate's few FK indexes; without these every per-item lookup scans a whole table
+/// (uu-cost takes many minutes instead of ~10 s, the eu-cost graph ~2½ min instead of ~10 s).
+const LOOKUP_INDEXES: &[(&str, &str, &str)] = &[
+    ("idx_recipe_item_out", "recipe_item_outputs", "item_outputs_value_item_id"),
+    ("idx_recipe_fluid_out", "recipe_fluid_outputs", "fluid_outputs_value_fluid_id"),
+    ("idx_gtr_recipe", "greg_tech_recipe", "recipe_id"),
+    ("idx_gtrm_gtr", "greg_tech_recipe_metadata", "greg_tech_recipe_id"),
+    ("idx_igs_group", "item_group_item_stacks", "item_group_id"),
+    ("idx_rig_recipe", "recipe_item_group", "recipe_id"),
+    ("idx_rig_inputs", "recipe_item_group", "item_inputs_id"),
+    ("idx_rfg_recipe", "recipe_fluid_group", "recipe_id"),
+    ("idx_od_group", "ore_dictionary", "item_group_id"),
+    ("idx_crop_recipe", "crop", "recipe_id"),
+];
+
+fn create_lookup_indexes(conn: &Connection) -> Result<usize> {
+    let mut created = 0;
+    for (name, table, column) in LOOKUP_INDEXES {
+        let exists = |kind: &str, n: &str| -> rusqlite::Result<bool> {
+            conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
+                params![kind, n],
+                |r| r.get(0),
+            )
+        };
+        if exists("table", table)? && !exists("index", name)? {
+            conn.execute_batch(&format!("CREATE INDEX {name} ON {table}({column})"))?;
+            created += 1;
+        }
+    }
+    Ok(created)
+}
+
+/// Add any missing lookup indexes to the database at `path` (a one-time write; existing
+/// indexes are left alone). Returns how many were created.
+pub fn ensure_lookup_indexes(path: &str) -> Result<usize> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    create_lookup_indexes(&conn)
+}
+
 pub struct Repository {
     conn: Connection,
     /// SQL expression yielding an item's tooltip as one newline-joined string.
@@ -254,6 +296,11 @@ pub struct Repository {
 
 impl Repository {
     pub fn open(path: &str) -> Result<Self> {
+        match ensure_lookup_indexes(path) {
+            Ok(0) => {}
+            Ok(n) => eprintln!("Added {n} lookup indexes to {path} (one-time)."),
+            Err(e) => eprintln!("warning: could not add lookup indexes to {path} ({e}); queries will be slow"),
+        }
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA query_only=ON;")?;
         // Register a REGEXP function so search queries can use regex matching.
@@ -1259,7 +1306,11 @@ impl Repository {
                 result.entry(gid).or_default().push(recipe.clone());
             }
         }
-
+        // Fixed order (recipe id) for every good: graph node indices, and with them the
+        // tie-breaks and settle order of the cost searches, must not change between runs.
+        for recipes in result.values_mut() {
+            recipes.sort_by(|a, b| a.id.cmp(&b.id));
+        }
         Ok(result)
     }
 
@@ -1277,6 +1328,9 @@ impl Repository {
     pub fn recipes_producing(&self, goods_id: &str) -> Result<Vec<Recipe>> {
         if let Some(cached) = self.producing_cache.borrow().get(goods_id) {
             return Ok(cached.clone());
+        }
+        if *self.producing_cache_loaded.borrow() {
+            return Ok(Vec::new()); // the preload holds every produced good: nothing makes this one
         }
         let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT recipe_id FROM recipe_item_outputs
@@ -1707,7 +1761,9 @@ impl Repository {
             }};
         }
 
-        for (output_goods_id, recipes) in cache.iter() {
+        let mut outputs: Vec<(&String, &Vec<Recipe>)> = cache.iter().collect();
+        outputs.sort_by(|a, b| a.0.cmp(b.0)); // fixed node order, see preload_producing_recipes
+        for (output_goods_id, recipes) in outputs {
             for recipe in recipes {
                 // Filter recycling / recycle-metadata recipes, and NEI pages that only
                 // display a process as one 1-EU recipe (DISPLAY_ONLY_TYPES).
@@ -2001,17 +2057,7 @@ pub fn build_db(script_path: &str, db_path: &str, on_progress: impl Fn(u64)) -> 
         conn.execute_batch(&batch)?;
     }
 
-    // Additional indexes beyond what HSQLDB defined
-    conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_recipe_item_out ON recipe_item_outputs(item_outputs_value_item_id);
-         CREATE INDEX IF NOT EXISTS idx_recipe_fluid_out ON recipe_fluid_outputs(fluid_outputs_value_fluid_id);
-         CREATE INDEX IF NOT EXISTS idx_gtr_recipe ON greg_tech_recipe(recipe_id);
-         CREATE INDEX IF NOT EXISTS idx_gtrm_gtr ON greg_tech_recipe_metadata(greg_tech_recipe_id);
-         CREATE INDEX IF NOT EXISTS idx_igs_group ON item_group_item_stacks(item_group_id);
-         CREATE INDEX IF NOT EXISTS idx_rig_recipe ON recipe_item_group(recipe_id);
-         CREATE INDEX IF NOT EXISTS idx_rfg_recipe ON recipe_fluid_group(recipe_id);
-         CREATE INDEX IF NOT EXISTS idx_od_group ON ore_dictionary(item_group_id);",
-    )?;
+    create_lookup_indexes(&conn)?;
 
     on_progress(line_count);
     Ok(())
