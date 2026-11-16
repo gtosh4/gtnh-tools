@@ -15,7 +15,7 @@ The data files are too large for git; they are attached to a
 
 | File | Size | Used by | Contents |
 |---|---|---|---|
-| `nesql.db.zst` | 98 MB (540 MB unpacked) | `gtnh` | GTNH 2.9.0 NESQL export (SQLite): items, fluids, ore dicts, all recipe maps, GT recipe metadata, quests, bees, mobs, worldgen (ore veins, small ores, underground fluids), CropsNH crops |
+| `nesql.db.zst` | 114 MB (620 MB unpacked) | `gtnh` | GTNH 2.9.0 NESQL export (SQLite, with lookup indexes): items, fluids, ore dicts, all recipe maps, GT recipe metadata, quests, bees, mobs, worldgen (ore veins, small ores, underground fluids), CropsNH crops |
 | `blocks.db` | 14 MB | `gtnhbuild` | Block palette: every placeable block + meta, its per-face textures and average colours, light, bounds |
 | `block-textures.zip` | 7 MB | `gtnhbuild` | Block texture PNGs referenced by `blocks.db` (Modernity resource pack) |
 | `item-icons.zip` | 148 MB | optional | 64×64 item icons, under `item.image_file_path` from `nesql.db` |
