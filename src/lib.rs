@@ -5,7 +5,7 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::{Connection, Error as SqlError, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ===== Public data types =====
 
@@ -78,6 +78,22 @@ impl GtRecipe {
     }
     pub fn eu_total(&self) -> i64 {
         self.voltage as i64 * self.amperage as i64 * self.duration_ticks as i64
+    }
+}
+
+/// Voltage tier at which a rocket of the given tier is first buildable
+/// (T1 = EV … T7 = UEV, T8 and above = UIV).
+fn rocket_tier_voltage(rocket_tier: i64) -> &'static str {
+    match rocket_tier {
+        ..=0 => "",
+        1 => "EV",
+        2 => "IV",
+        3 => "LuV",
+        4 => "ZPM",
+        5 => "UV",
+        6 => "UHV",
+        7 => "UEV",
+        _ => "UIV",
     }
 }
 
@@ -182,10 +198,36 @@ impl Recipe {
     }
 }
 
+/// CropsNH crop data: the text lines of NEI's "Crops" page, from the `crop` table the
+/// NESQL-Exporter `cropsnh` plugin writes (`/nesqlcrops`, merged with `merge-db`). The seed,
+/// soils, sub-soils and drops are the recipe's inputs and outputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CropInfo {
+    pub crop_id: String,
+    pub name: String,
+    pub tier: i32,
+    /// Growth points needed to reach maturity.
+    pub growth_duration: i32,
+    /// Multiplier on the number of drops.
+    pub drop_chance: f32,
+    pub liked_biome_tags: Vec<String>,
+    /// Growth requirements other than sub-soil (light, weather, ...).
+    pub requirements: Vec<String>,
+}
+
+/// Recipe type of the CropsNH crop pages (seed + soils → drops).
+pub const CROPS_RECIPE_TYPE: &str = "Crops";
+/// Input slot of a `Crops` recipe holding the sub-soil blocks (0 = seed, 1 = soils).
+pub const CROP_SUBSOIL_SLOT: i32 = 2;
+
 // ===== Repository =====
 
 pub struct Repository {
     conn: Connection,
+    /// SQL expression yielding an item's tooltip as one newline-joined string.
+    tooltip_expr: &'static str,
+    /// The export carries CropsNH crop data (`crop` table).
+    has_crops: bool,
     /// Keyed by output goods_id. Populated lazily in bulk on first access.
     producing_cache: RefCell<HashMap<String, Vec<Recipe>>>,
     producing_cache_loaded: RefCell<bool>,
@@ -212,12 +254,78 @@ impl Repository {
                 Ok(regexp.is_match(text))
             },
         )?;
+        // Exports before NESQL-Exporter 0.5.7 store the tooltip as one `item.tooltip` column;
+        // newer ones store one row per line in `item_tooltip`.
+        let has_tooltip_column: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('item') WHERE name = 'tooltip')",
+            [],
+            |r| r.get(0),
+        )?;
+        let tooltip_expr = if has_tooltip_column {
+            "item.tooltip"
+        } else {
+            "COALESCE((SELECT group_concat(t.tooltip, char(10) ORDER BY t.tooltip_order)
+                       FROM item_tooltip t WHERE t.item_id = item.id), '')"
+        };
+        let has_crops: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'crop')",
+            [],
+            |r| r.get(0),
+        )?;
         Ok(Repository {
             conn,
+            tooltip_expr,
+            has_crops,
             producing_cache: RefCell::new(HashMap::new()),
             producing_cache_loaded: RefCell::new(false),
             od_cache: RefCell::new(HashMap::new()),
         })
+    }
+
+    /// CropsNH data for a "Crops" recipe; `None` for other recipes or exports without crops.
+    pub fn crop_info(&self, recipe_id: &str) -> Result<Option<CropInfo>> {
+        if !self.has_crops {
+            return Ok(None);
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, crop_id, localized_name, tier, growth_duration, drop_chance
+                 FROM crop WHERE recipe_id = ?",
+                params![recipe_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, i32>(3)?,
+                        r.get::<_, i32>(4)?,
+                        r.get::<_, f32>(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((id, crop_id, name, tier, growth_duration, drop_chance)) = row else {
+            return Ok(None);
+        };
+        let lines = |table: &str, column: &str| -> Result<Vec<String>> {
+            let mut stmt = self.conn.prepare_cached(&format!(
+                "SELECT {column} FROM {table} WHERE crop_id = ? ORDER BY {column}_order"
+            ))?;
+            let rows = stmt
+                .query_map(params![id], |r| r.get::<_, Option<String>>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows.into_iter().flatten().collect())
+        };
+        Ok(Some(CropInfo {
+            name: name.unwrap_or_else(|| crop_id.clone()),
+            crop_id,
+            tier,
+            growth_duration,
+            drop_chance,
+            liked_biome_tags: lines("crop_liked_biome_tags", "liked_biome_tags")?,
+            requirements: lines("crop_requirements", "requirements")?,
+        }))
     }
 
     // --- Private helpers ---
@@ -677,12 +785,15 @@ impl Repository {
     // --- Public query methods ---
 
     pub fn get_item(&self, id: &str) -> Result<Option<Item>> {
+        let tt = self.tooltip_expr;
         let row = self
             .conn
             .query_row(
-                "SELECT id, localized_name, mod_id, internal_name, tooltip,
-                    unlocalized_name, nbt, max_stack_size, item_damage
-             FROM item WHERE id = ?",
+                &format!(
+                    "SELECT id, localized_name, mod_id, internal_name, {tt},
+                        unlocalized_name, nbt, max_stack_size, item_damage
+                 FROM item WHERE id = ?"
+                ),
                 params![id],
                 |r| {
                     Ok(Item {
@@ -790,43 +901,35 @@ impl Repository {
         regex_mode: bool,
     ) -> Result<Vec<Item>> {
         let lim = limit.map(|n| n as i64).unwrap_or(i64::MAX);
-        let sql = if regex_mode {
-            if tooltip {
-                "SELECT id, localized_name, mod_id, internal_name, tooltip,
-                        unlocalized_name, nbt, max_stack_size, item_damage
-                 FROM item
-                 WHERE regexp(?1, lower(localized_name)) OR regexp(?1, lower(id))
-                    OR regexp(?1, lower(internal_name)) OR regexp(?1, lower(tooltip))
-                 LIMIT ?2"
-            } else {
-                "SELECT id, localized_name, mod_id, internal_name, tooltip,
-                        unlocalized_name, nbt, max_stack_size, item_damage
-                 FROM item
-                 WHERE regexp(?1, lower(localized_name)) OR regexp(?1, lower(id))
-                    OR regexp(?1, lower(internal_name))
-                 LIMIT ?2"
-            }
-        } else if tooltip {
-            "SELECT id, localized_name, mod_id, internal_name, tooltip,
+        let tt = self.tooltip_expr;
+        let select = format!(
+            "SELECT id, localized_name, mod_id, internal_name, {tt},
                     unlocalized_name, nbt, max_stack_size, item_damage
-             FROM item
-             WHERE lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
-                OR lower(internal_name) LIKE ?1 OR lower(tooltip) LIKE ?1
-             LIMIT ?2"
-        } else {
-            "SELECT id, localized_name, mod_id, internal_name, tooltip,
-                    unlocalized_name, nbt, max_stack_size, item_damage
-             FROM item
-             WHERE lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
-                OR lower(internal_name) LIKE ?1
-             LIMIT ?2"
+             FROM item"
+        );
+        let filter = match (regex_mode, tooltip) {
+            (true, true) => format!(
+                "regexp(?1, lower(localized_name)) OR regexp(?1, lower(id))
+                 OR regexp(?1, lower(internal_name)) OR regexp(?1, lower({tt}))"
+            ),
+            (true, false) => "regexp(?1, lower(localized_name)) OR regexp(?1, lower(id))
+                 OR regexp(?1, lower(internal_name))"
+                .to_string(),
+            (false, true) => format!(
+                "lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
+                 OR lower(internal_name) LIKE ?1 OR lower({tt}) LIKE ?1"
+            ),
+            (false, false) => "lower(localized_name) LIKE ?1 OR lower(id) LIKE ?1
+                 OR lower(internal_name) LIKE ?1"
+                .to_string(),
         };
+        let sql = format!("{select} WHERE {filter} LIMIT ?2");
         let q: String = if regex_mode {
             query.to_lowercase()
         } else {
             format!("%{}%", query.to_lowercase())
         };
-        let mut stmt = self.conn.prepare_cached(sql)?;
+        let mut stmt = self.conn.prepare_cached(&sql)?;
         stmt.query_map(params![q, lim], |r| {
             Ok(Item {
                 id: r.get(0)?,
@@ -1411,6 +1514,71 @@ impl Repository {
         }
         Ok(out)
     }
+
+    /// Returns a map of ore item ID → minimum voltage tier (u8) needed to mine it,
+    /// for ores that only generate off-world.
+    ///
+    /// Each vein's primary, secondary, between, and sporadic ores take the lowest
+    /// rocket tier among the dimensions the vein generates in (`ore_vein_dimensions`,
+    /// from the GT NEI ore plugin data); an ore in several veins takes the lowest
+    /// across them. Ores reachable at rocket tier 0 (Overworld, Nether, End,
+    /// Twilight) are omitted.
+    pub fn ore_mining_tiers(&self) -> Result<HashMap<String, u8>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ov.primary_id, ov.secondary_id, ov.between_id, ov.sporadic_id,
+                    MIN(d.dimensions_rocket_tier)
+             FROM ore_vein ov
+             JOIN ore_vein_dimensions d ON d.ore_vein_id = ov.id
+             GROUP BY ov.id",
+        )?;
+        let mut rocket_tiers: HashMap<String, i64> = HashMap::new();
+        for row in stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })? {
+            let (p, s, b, sp, rocket_tier) = row?;
+            for id in [p, s, b, sp].into_iter().flatten() {
+                let e = rocket_tiers.entry(id).or_insert(rocket_tier);
+                if rocket_tier < *e {
+                    *e = rocket_tier;
+                }
+            }
+        }
+        Ok(rocket_tiers
+            .into_iter()
+            .filter(|&(_, rocket_tier)| rocket_tier > 0)
+            .map(|(id, rocket_tier)| (id, tier_rank_u8(rocket_tier_voltage(rocket_tier))))
+            .collect())
+    }
+
+    /// Returns the set of all ore block item IDs found in any ore vein
+    /// (overworld, Nether, End, or space).  These are free to obtain by mining
+    /// and should be seeded as cost-0 sources in the EU cost graph.
+    pub fn all_ore_vein_items(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT primary_id, secondary_id, between_id, sporadic_id FROM ore_vein",
+        )?;
+        let mut out: Vec<String> = Vec::new();
+        for row in stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })? {
+            let (p, s, b, sp) = row?;
+            out.extend([p, s, b, sp].into_iter().flatten());
+        }
+        out.sort_unstable();
+        out.dedup();
+        Ok(out)
+    }
 }
 
 // ===== EU cost graph =====
@@ -1460,6 +1628,10 @@ pub struct EuGraph {
     /// Maps NodeIndex → EU cost per unit (0.0 for free sources).
     /// Populated after graph construction by the caller via populate_seed_costs().
     pub seed_costs: HashMap<NodeIndex, f64>,
+    /// Minimum voltage tier (as u8) required to mine a space-planet ore block.
+    /// Populated by populate_mining_tiers().  Used by run_min_tier_dijkstra to
+    /// seed ore items at their planet's rocket tier instead of tier 0.
+    pub mining_tiers: HashMap<NodeIndex, u8>,
 }
 
 impl Repository {
@@ -1548,9 +1720,20 @@ impl Repository {
                 // not a consumed input — treat as zero-input so the recipe fires
                 // for free. Planetary Gas Siphon recipes are also genuinely
                 // zero-input and must not be skipped here.
-                let is_bee_products = type_name.starts_with("Bee Products");
-                let inputs: Vec<&RecipeIo> = if is_bee_products {
+                let is_free_source = type_name.starts_with("Bee Products");
+                // CropsNH "Crops" recipes: the seed is planted, not spent, and the soil is
+                // ordinary ground, so neither is an input. The sub-soil block (slot 2, when
+                // the crop needs one) must exist under the crop: it stays an input slot with
+                // amount 0, so it gates reachability and the recipe's tier (min-tier /
+                // peak tier) without adding EU.
+                let is_crop = type_name == CROPS_RECIPE_TYPE;
+                let inputs: Vec<&RecipeIo> = if is_free_source {
                     vec![]
+                } else if is_crop {
+                    recipe
+                        .inputs()
+                        .filter(|io| io.slot == CROP_SUBSOIL_SLOT && io.goods_id.is_some())
+                        .collect()
                 } else {
                     recipe
                         .inputs()
@@ -1567,15 +1750,16 @@ impl Repository {
                         })
                         .collect()
                 };
-                // Zero-input recipes (PGS, Bee Products) are valid; they fire
-                // at zero input-cost and are handled specially in run_eu_dijkstra.
+                // Zero-input recipes (PGS, Bee Products, crops without a sub-soil) are
+                // valid; they fire at zero input-cost and are handled specially in
+                // run_eu_dijkstra.
                 // Only skip recipes that had non-zero-amount inputs but all were
                 // stripped by the filter (e.g. shapeless table with only NBT inputs).
                 // That condition is: inputs was non-empty before filter but empty after.
                 // We approximate by skipping only if the recipe truly has no recorded
                 // inputs AND it is not one of the known zero-input machine types.
                 let recipe_has_any_inputs = recipe.inputs().any(|_| true);
-                if inputs.is_empty() && recipe_has_any_inputs && !is_bee_products {
+                if inputs.is_empty() && recipe_has_any_inputs && !is_free_source && !is_crop {
                     continue;
                 }
 
@@ -1621,7 +1805,7 @@ impl Repository {
                 // Add Input edges for each logical slot.
                 for (slot_idx, input_io) in inputs.iter().enumerate() {
                     let input_id = input_io.goods_id.as_ref().unwrap();
-                    let amount = input_io.amount as f64;
+                    let amount = if is_crop { 0.0 } else { input_io.amount as f64 };
                     slot_amounts.insert((recipe_ni, slot_idx), amount);
 
                     if input_io.io_type == RecipeIoType::OreDictInput {
@@ -1688,12 +1872,78 @@ impl Repository {
             recipe_idx,
             slot_amounts,
             seed_costs: HashMap::new(),
+            mining_tiers: HashMap::new(),
         })
     }
 }
 
 fn nonempty(s: String) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
+}
+
+// ===== Database merge =====
+
+/// Copy into `dst` every row of `src` (another NESQL export of the same game, e.g. a
+/// `/nesqlcrops` repository) that `dst` lacks, creating the tables only `src` has. NESQL keys
+/// rows by content hashes, so a row both hold is identical: tables with a primary key take
+/// `INSERT OR IGNORE`, the rest (collection tables) only the rows `dst` doesn't already have.
+/// `src`'s export `metadata` row is skipped; its plugin names join `dst`'s. Returns the rows
+/// added per table, for tables that gained any.
+pub fn merge_db(dst: &str, src: &str) -> Result<Vec<(String, usize)>> {
+    let mut conn = Connection::open(dst)?;
+    conn.execute("ATTACH DATABASE ?1 AS src", params![src])?;
+    let tables: Vec<(String, String)> = conn
+        .prepare(
+            "SELECT name, sql FROM src.sqlite_master
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'metadata'
+             ORDER BY name",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+
+    let tx = conn.transaction()?;
+    let mut added = Vec::new();
+    for (table, create_sql) in tables {
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?1)",
+            params![table],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            tx.execute_batch(&create_sql)?;
+        }
+        // Columns both copies have (identical unless the exporter's schema changed).
+        let dst_cols: Vec<(String, bool)> = tx
+            .prepare(&format!("SELECT name, pk > 0 FROM main.pragma_table_info('{table}')"))?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let src_cols: HashSet<String> = tx
+            .prepare(&format!("SELECT name FROM src.pragma_table_info('{table}')"))?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let cols: Vec<String> = dst_cols
+            .iter()
+            .filter(|(c, _)| src_cols.contains(c))
+            .map(|(c, _)| format!("\"{c}\""))
+            .collect();
+        let cols = cols.join(", ");
+        let has_pk = dst_cols.iter().any(|(_, pk)| *pk);
+        let sql = if has_pk {
+            format!("INSERT OR IGNORE INTO main.\"{table}\" ({cols}) SELECT {cols} FROM src.\"{table}\"")
+        } else {
+            format!(
+                "INSERT INTO main.\"{table}\" ({cols})
+                 SELECT {cols} FROM src.\"{table}\" EXCEPT SELECT {cols} FROM main.\"{table}\""
+            )
+        };
+        let n = tx.execute(&sql, [])?;
+        if n > 0 {
+            added.push((table, n));
+        }
+    }
+    tx.commit()?;
+    conn.execute("DETACH DATABASE src", [])?;
+    Ok(added)
 }
 
 // ===== Database builder =====

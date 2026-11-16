@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use gtnh::{
-    EuGraph, EuGraphEdge, EuGraphNode, GtRecipe, Recipe, RecipeIoType, Repository, build_db,
-    tier_rank_u8,
+    CROPS_RECIPE_TYPE, EuGraph, EuGraphEdge, EuGraphNode, GtRecipe, Recipe, RecipeIo, RecipeIoType,
+    Repository, build_db, merge_db, tier_rank_u8,
 };
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -46,6 +46,13 @@ enum Command {
         /// Output database path
         #[arg(short, long, default_value = "nesql.db")]
         output: String,
+    },
+
+    /// Merge another NESQL export into the database (e.g. a `/nesqlcrops` repository's
+    /// nesql.db); rows the database already has are skipped
+    MergeDb {
+        /// Path to the export to merge in
+        src: String,
     },
 
     /// Search items and fluids by name
@@ -291,6 +298,86 @@ fn print_gt_recipe(gt: &GtRecipe) {
     }
 }
 
+/// CropsNH page text for a "Crops" recipe: tier, growth points, drop multiplier, liked biomes and
+/// growth requirements (the seed, soils and drops are the recipe's inputs and outputs).
+fn print_crop(repo: &Repository, recipe: &Recipe) {
+    if recipe.recipe_type_name.as_deref() != Some(CROPS_RECIPE_TYPE) {
+        return;
+    }
+    let Ok(Some(c)) = repo.crop_info(&recipe.id) else {
+        return;
+    };
+    println!(
+        "  Crop:  {} [{}]  tier {}  growth {} pts  drop ×{}",
+        c.name,
+        c.crop_id,
+        c.tier,
+        c.growth_duration,
+        // stored as f32 (0.6983373): round like NEI does
+        format!("{:.2}", c.drop_chance).trim_end_matches('0').trim_end_matches('.')
+    );
+    if !c.liked_biome_tags.is_empty() {
+        println!("  Likes: {}", c.liked_biome_tags.join(", "));
+    }
+    for r in &c.requirements {
+        println!("  Needs: {r}");
+    }
+}
+
+/// Name of an input: ore dict entries by name, multi-item groups (no ore dict, e.g. a crop's
+/// soils) as "one of N: a, b, c, …".
+fn input_label(repo: &Repository, io: &RecipeIo) -> String {
+    let db_id = io.goods_id.as_deref().unwrap_or("?");
+    if io.io_type != RecipeIoType::OreDictInput {
+        return repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
+    }
+    if !db_id.starts_with("ig~") {
+        return format!("{} (ore dict)", from_db_id(db_id));
+    }
+    // Distinct names: a group often holds several metas of one block (e.g. a block's variants).
+    let members = repo.ore_dict_item_ids(db_id).unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    for m in &members {
+        let name = repo.name_of(m).unwrap_or_else(|_| m.clone());
+        if !names.contains(&name) {
+            if names.len() == 3 {
+                names.push("…".to_string());
+                break;
+            }
+            names.push(name);
+        }
+    }
+    format!("one of {}: {}", members.len(), names.join(", "))
+}
+
+/// Recipes as JSON, with a `crop` object on CropsNH "Crops" recipes.
+fn recipes_json(repo: &Repository, recipes: &[Recipe]) -> Result<serde_json::Value> {
+    recipes
+        .iter()
+        .map(|r| {
+            let mut v = serde_json::to_value(r)?;
+            if let Some(crop) = repo.crop_info(&r.id)? {
+                v["crop"] = serde_json::to_value(crop)?;
+            }
+            Ok(v)
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(serde_json::Value::Array)
+}
+
+/// " (p%)" for chanced outputs: whole percents as is, others to 0.01% (crop drops go that fine).
+fn fmt_prob(p: f32) -> String {
+    if p >= 1.0 {
+        return String::new();
+    }
+    let pct = p as f64 * 100.0;
+    if (pct - pct.round()).abs() < 1e-6 {
+        format!("  ({pct:.0}%)")
+    } else {
+        format!("  ({pct:.2}%)")
+    }
+}
+
 fn print_recipe(repo: &Repository, recipe: &Recipe) {
     println!(
         "[{}]  type: {}",
@@ -300,10 +387,11 @@ fn print_recipe(repo: &Repository, recipe: &Recipe) {
     if let Some(gt) = &recipe.gt_recipe {
         print_gt_recipe(gt);
     }
+    print_crop(repo, recipe);
     println!("  Inputs:");
     for io in recipe.inputs() {
         let db_id = io.goods_id.as_deref().unwrap_or("?");
-        let name = repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
+        let name = input_label(repo, io);
         println!(
             "    {:>4}×  {:<35}  [{}]",
             io.amount,
@@ -315,11 +403,7 @@ fn print_recipe(repo: &Repository, recipe: &Recipe) {
     for io in recipe.outputs() {
         let db_id = io.goods_id.as_deref().unwrap_or("?");
         let name = repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
-        let prob = if io.probability < 1.0 {
-            format!("  ({:.0}%)", io.probability * 100.0)
-        } else {
-            String::new()
-        };
+        let prob = fmt_prob(io.probability);
         println!(
             "    {:>4}×  {:<35}  [{}]{}",
             io.amount,
@@ -360,25 +444,16 @@ fn print_recipe_list(repo: &Repository, recipes: &[Recipe], target_id: &str, by:
         if let Some(gt) = &recipe.gt_recipe {
             print_gt_recipe(gt);
         }
+        print_crop(repo, recipe);
         println!("  Inputs:");
         for io in recipe.inputs() {
-            let db_id = io.goods_id.as_deref().unwrap_or("?");
-            let label = if io.io_type == RecipeIoType::OreDictInput {
-                format!("{} (ore dict)", from_db_id(db_id))
-            } else {
-                repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string())
-            };
-            println!("    {:>4}×  {}", io.amount, label);
+            println!("    {:>4}×  {}", io.amount, input_label(repo, io));
         }
         println!("  Outputs:");
         for io in recipe.outputs() {
             let db_id = io.goods_id.as_deref().unwrap_or("?");
             let name = repo.name_of(db_id).unwrap_or_else(|_| db_id.to_string());
-            let prob = if io.probability < 1.0 {
-                format!("  ({:.0}%)", io.probability * 100.0)
-            } else {
-                String::new()
-            };
+            let prob = fmt_prob(io.probability);
             println!("    {:>4}×  {}{}", io.amount, name, prob);
         }
         let _ = by;
@@ -700,6 +775,42 @@ fn populate_seed_costs(eu_graph: &mut EuGraph, repo: &Repository) {
     eu_graph.seed_costs = seeds;
 }
 
+/// Seed all ore vein items into eu_graph.seed_costs (cost 0.0) and populate
+/// eu_graph.mining_tiers for space-planet ores.
+///
+/// Overworld/Nether/End/Twilight ores are seeded at tier 0 (accessible with surface mining).
+/// Off-world ores are seeded at the voltage tier of the lowest rocket that reaches them
+/// (from ore_vein_dimensions).
+/// run_min_tier_dijkstra then uses mining_tiers to assign the correct minimum tier.
+fn populate_mining_tiers(eu_graph: &mut EuGraph, repo: &Repository) {
+    // Seed ALL ore vein items as free sources (cost 0.0).
+    match repo.all_ore_vein_items() {
+        Ok(items) => {
+            for item_id in items {
+                if let Some(&ni) = eu_graph.goods_idx.get(&item_id) {
+                    eu_graph.seed_costs.entry(ni).or_insert(0.0);
+                }
+            }
+        }
+        Err(e) => eprintln!("Warning: could not load ore vein items: {e}"),
+    }
+    // For space-planet ores, record the minimum tier required to mine them.
+    match repo.ore_mining_tiers() {
+        Ok(tiers) => {
+            for (item_id, tier) in tiers {
+                if let Some(&ni) = eu_graph.goods_idx.get(&item_id) {
+                    // Only raise the tier; don't lower it if already set higher.
+                    let e = eu_graph.mining_tiers.entry(ni).or_insert(tier);
+                    if tier > *e {
+                        *e = tier;
+                    }
+                }
+            }
+        }
+        Err(e) => eprintln!("Warning: could not load ore mining tiers: {e}"),
+    }
+}
+
 /// Inject synthetic zero-input recipe nodes for infinite sources that have no
 /// DB recipe entry.  These fire immediately in the Dijkstra's zero-slot pre-pass
 /// and produce their outputs at 0 EU, displaying the machine name in the tree.
@@ -915,9 +1026,10 @@ fn run_min_tier_dijkstra(eu_graph: &EuGraph) -> DijkState {
         }
     }
 
-    // Seed infinite sources at tier 0.
+    // Seed infinite sources at tier 0 (or planet mining tier for space ores).
     for (&ni, &cost) in &eu_graph.seed_costs {
-        pq.push((Reverse((0u8, OrdF64(cost))), ni, None));
+        let tier = eu_graph.mining_tiers.get(&ni).copied().unwrap_or(0u8);
+        pq.push((Reverse((tier, OrdF64(cost))), ni, None));
     }
 
     // Fire zero-input recipes immediately.
@@ -1692,7 +1804,12 @@ fn print_eu_tree(result: &EuResult, depth: usize, max_depth: usize, pad: &str) {
             let child_pad = format!("{pad}    ");
             for (_, name, amount, sub) in &deduped {
                 let is_free = matches!(sub.path, EuPath::Free);
-                let leaf_tag = if is_free { "  [free]" } else { "" };
+                // amount 0: a block the recipe needs in place (a crop's sub-soil), not spent
+                let leaf_tag = match (is_free, *amount == 0.0) {
+                    (_, true) => "  [placed, not consumed]",
+                    (true, false) => "  [free]",
+                    (false, false) => "",
+                };
                 println!(
                     "{pad}    {}×  {}  @  {}  =  {}{}",
                     amount,
@@ -1803,11 +1920,22 @@ fn print_uu_tree(result: &UuResult, depth: usize, max_depth: usize, pad: &str) {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // build-db doesn't need an existing database
+    // build-db and merge-db don't read through the repository
     if let Command::BuildDb { script, output } = &cli.command {
         eprintln!("Building {} from {}...", output, script);
         build_db(script, output, |n| eprintln!("  {} lines processed...", n))?;
         eprintln!("Done.");
+        return Ok(());
+    }
+    if let Command::MergeDb { src } = &cli.command {
+        eprintln!("Merging {} into {}...", src, cli.data);
+        let added = merge_db(&cli.data, src)?;
+        if added.is_empty() {
+            eprintln!("  nothing new");
+        }
+        for (table, n) in &added {
+            eprintln!("  {table}: +{n}");
+        }
         return Ok(());
     }
 
@@ -1815,7 +1943,7 @@ fn main() -> Result<()> {
     let repo = Repository::open(&cli.data)?;
 
     match &cli.command {
-        Command::BuildDb { .. } => unreachable!(),
+        Command::BuildDb { .. } | Command::MergeDb { .. } => unreachable!(),
 
         Command::Search {
             query,
@@ -1974,7 +2102,7 @@ fn main() -> Result<()> {
                 .collect();
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&shown)?);
+                println!("{}", serde_json::to_string_pretty(&recipes_json(&repo, &shown)?)?);
                 return Ok(());
             }
             println!(
@@ -2015,7 +2143,7 @@ fn main() -> Result<()> {
                 .collect();
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&shown)?);
+                println!("{}", serde_json::to_string_pretty(&recipes_json(&repo, &shown)?)?);
                 return Ok(());
             }
             println!(
@@ -2042,7 +2170,8 @@ fn main() -> Result<()> {
                 .get_recipe(id)?
                 .ok_or_else(|| anyhow::anyhow!("Recipe not found: {id}"))?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&recipe)?);
+                let json = recipes_json(&repo, std::slice::from_ref(&recipe))?;
+                println!("{}", serde_json::to_string_pretty(&json[0])?);
                 return Ok(());
             }
             print_recipe(&repo, &recipe);
@@ -2056,7 +2185,7 @@ fn main() -> Result<()> {
             let shown: Vec<_> = recipes.into_iter().take(*limit).collect();
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&shown)?);
+                println!("{}", serde_json::to_string_pretty(&recipes_json(&repo, &shown)?)?);
                 return Ok(());
             }
             println!(
@@ -2097,7 +2226,7 @@ fn main() -> Result<()> {
             let (eu_graph, dijk) = {
                 // Always load/build the EU graph; the cached DijkState is only reused for
                 // the default (unconstrained min-EU) mode.
-                let (g, cached_dijk) =
+                let (mut g, cached_dijk) =
                     if let Some(cached) = load_eu_cache(&cache_path, &cli.data) {
                         eprintln!("Loaded EU cache.");
                         cached
@@ -2113,6 +2242,8 @@ fn main() -> Result<()> {
                         save_eu_cache(&cache_path, &cli.data, &g, &d);
                         (g, d)
                     };
+                // Always (re-)populate mining tiers: not stored in the cache.
+                populate_mining_tiers(&mut g, &repo);
                 let d = if *min_tier {
                     eprintln!("Running min-tier Dijkstra...");
                     run_min_tier_dijkstra(&g)

@@ -19,6 +19,7 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 | Command | Description |
 |---------|-------------|
 | `build-db [script] [-o path]` | *(Legacy)* Convert `nesql-db.script` → `nesql.db` |
+| `merge-db <src>` | Merge another NESQL export into `--data` (e.g. a `/nesqlcrops` repository); only rows the DB lacks are added |
 | `search <query>` | Substring search items+fluids by name/id. Flags: `--tooltip`/`-t`, `--regex`/`-r`, `--limit N` |
 | `item <id>` / `fluid <id>` | Details for one item or fluid |
 | `recipe-types [--filter <str>]` | List recipe type names with counts |
@@ -63,6 +64,8 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 Fuel recipes (`voltage=0`) omit GT line; show `fuel_value=N` in Meta. Sort with `--sort fuel`.
 
 **Metadata keys:** `fuel_value`, `fuel_type` (0=diesel, 1=gas turbine, 5=magic), `lftr_output_power`, `lng_basic_output`, `sparge_max_byproduct`, `nke_range`, `precise_assembler_casing_tier`, `mass`, `coil_heat` (minimum Kelvin required — EBF and Alloy Blast Smelter)
+
+**CropsNH crops** (recipe type `Crops`, NEI's "Crops" page): inputs are the seed, then the soils and sub-soils (multi-item groups, shown as `one of N: …`); outputs are the harvest drops with their chances. Extra lines: `Crop:` (name, crop id, tier, growth points, drop multiplier), `Likes:` (biome tags), `Needs:` (growth requirements such as light). JSON adds a `crop` object. In `eu-cost` the seed and soil are free, but a required sub-soil (input slot 2) is a real input with amount 0 (shown `0× … [placed, not consumed]`): the crop is reachable only if some sub-soil block is, and that block's tier counts for `--min-tier`, `--max-tier` and the peak tier, with no EU added. They come from the NESQL-Exporter `cropsnh` plugin: run `/nesqlcrops` in a single-player world (exports only base + cropsnh to `.minecraft/nesql/crops/`), then `./gtnh merge-db <instance>/.minecraft/nesql/crops/nesql.db`. A full `/nesql` export includes them when `cropsnh` is in the exporter's `enabled_plugins`.
 
 ---
 
@@ -128,11 +131,17 @@ For recipes with `coil_heat ≤ 3601` the coil is never the bottleneck (Nichrome
 
 ## Data Scale
 
-115,873 items · 1,542 fluids · 121,352 ore dicts · 2,206 recipe types · 226,374 recipes · 79 ore veins · 538 bee mutations · 424 mob entries · 3,739 quests.
+GTNH 2.9.0: 122,285 items · 1,475 fluids · 142,291 ore dicts · 2,587 recipe types · 252,490 recipes · 122 ore veins · 54 small ores · 48 underground fluid entries · 543 bee mutations · 402 mob entries · 3,814 quests. (The 2.8 export is kept as `nesql-2.8.db`; use `--data nesql-2.8.db`.)
 
-Gaps: IC2 Nuclear Fission EU/t not stored. Planetary Gas Siphon and Bee Products are included.
+Gaps: IC2 Nuclear Fission EU/t not stored. Planetary Gas Siphon and Bee Products are included. CropsNH crop drops are not in the 2.9.0 export until a `/nesqlcrops` export is merged in (see Recipe Output Format); then `crop` (one row per crop, `recipe_id` joins its `Crops` recipe: `crop_id`, `localized_name`, `tier`, `growth_duration`, `drop_chance`) with `crop_liked_biome_tags` and `crop_requirements` (ordered text rows keyed by `crop.id`).
 
-Files: `src/lib.rs` (structs, queries), `src/main.rs` (CLI, formatting), `nesql.db` (SQLite).
+Files: `src/lib.rs` (structs, queries), `src/main.rs` (CLI, formatting), `nesql.db` (SQLite). Item tooltips are read from `item.tooltip` (exports before NESQL-Exporter 0.5.7) or joined from `item_tooltip` rows (0.5.7+); `Repository::open` picks whichever the DB has.
+
+Worldgen (NESQL-Exporter 0.5.7+, same data as the GT NEI ore plugin pages): `ore_vein` / `small_ore_deposit` with one `*_dimensions` row per dimension (`dimensions_name`, `dimensions_abbreviation`, `dimensions_rocket_tier`, `dimensions_miny`/`maxy`, `dimensions_chance`), and `underground_fluid` (per fluid × dimension: `rocket_tier`, `chance`, `min_amount`, `max_amount`). Ore mining tiers for `eu-cost` come from the lowest rocket tier per ore (T1=EV … T8+=UIV); older exports lack these columns and load without mining tiers.
+
+Block palette (`/nesqlblocks`, separate from `nesql.db`): `blocks.db` with `block` (one row per placeable block + meta: `registry_name` as WorldEdit uses it, `item_id` joining `nesql.db` items, `opaque_cube`, `normal_block`, `render_type`, `render_pass`, `light_value`, bounds), `block_face` (texture per side: down/up/north/south/west/east), and `texture` (`file`, size, `average_color`, `opacity`). Texture PNGs are in `block-textures.zip` under the `texture.file` paths; textures come from the active resource packs (Modernity). Item icons (64×64, inventory view) are in `item-icons.zip` under `item.image_file_path`.
+
+Building toolkit (`gtnhbuild/`, Python, needs Pillow): scripts in `builds/*.py` define `build = Build(...)`; `python -m gtnhbuild run builds/x.py` writes `x.schematic` (name-mapped, loads in WorldEdit and Schematica) to the Threshold instance and the Threshold server's WorldEdit folder, plus previews in `out/` (iso PNG, layer slices, ASCII layers, BOM, light/spawn check, three.js HTML). `gtnhbuild.terrain` syncs and reads the live server world so builds can be carved into real terrain (world coordinates, `//paste -o`). Palette lookups: `python -m gtnhbuild search|swatch|info|gradient` (`search --light` for emitters, `gradient` for colour runs between blocks). Handles ArchitectureCraft shapes (previews drawn from the mod's models), Carpenter's Blocks and Forge Multipart microblocks. Workflow and API: `.claude/skills/gtnh-build/SKILL.md`.
 
 ---
 
