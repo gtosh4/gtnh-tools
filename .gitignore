@@ -4,6 +4,10 @@
 *.md
 !README.md
 !CLAUDE.md
+!/.claude/skills/**/*.md
 *.db
+*.zip
 nesql*.script
 *.eucache
+/out
+__pycache__/
