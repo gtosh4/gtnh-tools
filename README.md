@@ -108,9 +108,9 @@ isometric PNGs, layer slices, ASCII layers, a bill of materials, a light/spawn r
 three.js viewer. `gtnhbuild.terrain` reads a world's region files so builds can be carved into
 real terrain in world coordinates (`//paste -o`).
 
-`builds/` holds a worked example (`example_cottage.py`) and the staged scripts of a full mountain
-base. [`.claude/skills/gtnh-build/SKILL.md`](.claude/skills/gtnh-build/SKILL.md) is the complete
-guide.
+`builds/` holds a worked example (`example_cottage.py`); other scripts you put there stay out of
+git (`.gitignore`). [`.claude/skills/gtnh-build/SKILL.md`](.claude/skills/gtnh-build/SKILL.md) is
+the complete guide.
 
 Some defaults point at the author's setup (the client instance's schematics folder, a server
 reached over `scp`); override them with `--schematic` and the `GTNH_SCHEMATICS_DIRS`,

@@ -11,3 +11,6 @@ nesql*.script
 *.eucache
 /out
 __pycache__/
+# personal build scripts stay local; only examples are shared
+/builds/*
+!/builds/example_*.py
