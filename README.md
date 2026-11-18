@@ -15,7 +15,7 @@ The data files are too large for git; they are attached to a
 
 | File | Size | Used by | Contents |
 |---|---|---|---|
-| `nesql.db.zst` | 114 MB (620 MB unpacked) | `gtnh` | GTNH 2.9.0 NESQL export (SQLite, with lookup indexes): items, fluids, ore dicts, all recipe maps, GT recipe metadata, quests, bees, mobs, worldgen (ore veins, small ores, underground fluids), CropsNH crops |
+| `nesql.db.zst` | 114 MB (620 MB unpacked) | `gtnh` | GTNH 2.9.0 NESQL export (SQLite, with lookup indexes): items, fluids, ore dicts, all recipe maps, GT recipe metadata, quests, bees, mobs, worldgen (ore veins, small ores, underground fluids), CropsNH crops, GT multiblock structures and the controllers' Shift tooltips |
 | `blocks.db` | 14 MB | `gtnhbuild` | Block palette: every placeable block + meta, its per-face textures and average colours, light, bounds |
 | `block-textures.zip` | 7 MB | `gtnhbuild` | Block texture PNGs referenced by `blocks.db` (Modernity resource pack) |
 | `item-icons.zip` | 148 MB | optional | 64×64 item icons, under `item.image_file_path` from `nesql.db` |
@@ -60,6 +60,8 @@ Run from the directory holding `nesql.db` (or pass `--data path/to/nesql.db`):
 ./gtnh eu-cost i:gregtech:gt.blockcasings5:4   # min EU to make 1, full chain
 ./gtnh eu-cost i:gregtech:gt.blockcasings5:4 --min-tier   # lowest peak voltage tier
 ./gtnh uu-cost i:minecraft:diamond:0           # min UU-Matter to make 1
+./gtnh structure i:gregtech:gt.blockmachines:1000 --tier 3 --layers   # EBF as NEI's structure tab builds it
+./gtnh structure i:gregtech:gt.blockcasings:11 # which multiblocks use a block
 ./gtnh --json recipes-for f:gregtech:hydrogen | jq '.[0]'
 ```
 
@@ -78,8 +80,10 @@ tiers, coil requirements and the graph rules in detail.
 ### Merging another export
 
 `gtnh merge-db <src.db>` folds another NESQL export of the same game into `nesql.db`, adding only
-the rows it lacks (NESQL keys rows by content hash). The CropsNH crops in the release database
-came in this way, from a `/nesqlcrops` export.
+the rows it lacks (NESQL keys rows by content hash; a list such as an item's tooltip lines is taken
+whole, only for entities the database has none for). The CropsNH crops and the multiblock
+structures in the release database came in this way, from `/nesqlcrops` and `/nesqlmultiblocks`
+exports.
 
 ## `gtnhbuild` — building toolkit
 
@@ -123,8 +127,10 @@ variables, or set `GTNH_SERVER_SCHEMATICS=""` to skip the server copy.
 
 - `nesql.db`: run `/nesql` (full export, ~1 hour) in a creative single-player world with
   NESQL-Exporter installed, then copy `.minecraft/nesql/<repository>/nesql.db` here. CropsNH crops
-  come from the exporter's `cropsnh` plugin (`/nesqlcrops`, then `gtnh merge-db`).
+  come from the exporter's `cropsnh` plugin (`/nesqlcrops`, then `gtnh merge-db`), multiblock
+  structures and Shift tooltips from its `multiblock` plugin (`/nesqlmultiblocks`, then
+  `gtnh merge-db`).
 - `blocks.db`, `block-textures.zip`: `/nesqlblocks` from the same exporter.
 
-The CropsNH plugin, `/nesqlcrops` and `/nesqlblocks` are additions in a local fork of
-NESQL-Exporter that is not published yet.
+The CropsNH and multiblock plugins, `/nesqlcrops`, `/nesqlmultiblocks`, `/nesqlblocks` and the
+Shift tooltips are additions in a local fork of NESQL-Exporter that is not published yet.

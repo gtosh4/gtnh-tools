@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use gtnh::{
-    CROPS_RECIPE_TYPE, EuGraph, EuGraphEdge, EuGraphNode, GtRecipe, Recipe, RecipeIo, RecipeIoType,
-    Repository, build_db, merge_db, tier_rank_u8,
+    CROPS_RECIPE_TYPE, EuGraph, EuGraphEdge, EuGraphNode, GtRecipe, MultiblockStructure, Recipe, RecipeIo,
+    RecipeIoType, Repository, StructureBlock, build_db, merge_db, tier_rank_u8,
 };
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -70,6 +70,18 @@ enum Command {
 
     /// Show details for an item by id
     Item { id: String },
+
+    /// Show a multiblock's structure (NEI "Multiblock Structure" tab), or the multiblocks a
+    /// block is part of
+    Structure {
+        id: String,
+        /// Tier slider value (default: lowest)
+        #[arg(short, long)]
+        tier: Option<i32>,
+        /// Also print the block layout, one y layer at a time
+        #[arg(long)]
+        layers: bool,
+    },
 
     /// Show details for a fluid by id
     Fluid { id: String },
@@ -1899,6 +1911,95 @@ fn print_uu_tree(result: &UuResult, depth: usize, max_depth: usize, pad: &str) {
     }
 }
 
+fn print_structure(repo: &Repository, s: &MultiblockStructure, layers: bool, json: bool) -> Result<()> {
+    // Group by item (or block:meta for blocks without one), most common first; the controller last.
+    let key = |b: &StructureBlock| b.item_id.clone().unwrap_or_else(|| format!("{}:{}", b.block, b.meta));
+    let mut groups: Vec<(String, usize, Vec<i32>)> = Vec::new();
+    for b in &s.blocks {
+        let k = key(b);
+        let g = match groups.iter_mut().position(|g| g.0 == k) {
+            Some(i) => &mut groups[i],
+            None => {
+                groups.push((k, 0, Vec::new()));
+                groups.last_mut().unwrap()
+            }
+        };
+        g.1 += 1;
+        if b.dot != 0 && !g.2.contains(&b.dot) {
+            g.2.push(b.dot);
+        }
+    }
+    groups.sort_by_key(|g| (g.0 == s.controller_id, Reverse(g.1)));
+    let name = |k: &str| -> String {
+        if k.starts_with("i~") { repo.name_of(k).unwrap_or_else(|_| k.to_string()) } else { k.to_string() }
+    };
+
+    if json {
+        let names: HashMap<String, String> = groups.iter().map(|g| (from_db_id(&g.0), name(&g.0))).collect();
+        let mut v = serde_json::to_value(s)?;
+        v["controller_id"] = from_db_id(&s.controller_id).into();
+        v["name"] = name(&s.controller_id).into();
+        v["names"] = serde_json::to_value(names)?;
+        for b in v["blocks"].as_array_mut().into_iter().flatten() {
+            if let Some(id) = b["item_id"].as_str() {
+                b["item_id"] = from_db_id(id).into();
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
+
+    let [sx, sy, sz] = s.size;
+    let [cx, cy, cz] = s.controller;
+    println!("{}  [{}]", name(&s.controller_id), from_db_id(&s.controller_id));
+    println!(
+        "  tier {} of {} · {sx}×{sy}×{sz} (x×y×z) · controller at ({cx},{cy},{cz}) facing south (+z)",
+        s.tier, s.max_tier
+    );
+    // Layout symbols: letters by frequency, '@' for the controller.
+    let symbols: Vec<char> = ('A'..='Z').chain('a'..='z').chain('0'..='9').collect();
+    let mut symbol: HashMap<&str, char> = HashMap::new();
+    let mut next = 0;
+    println!("  blocks ({}):", s.blocks.len());
+    for (k, n, dots) in &groups {
+        let c = if *k == s.controller_id {
+            '@'
+        } else {
+            next += 1;
+            symbols.get(next - 1).copied().unwrap_or('?')
+        };
+        symbol.insert(k.as_str(), c);
+        let dots = if dots.is_empty() {
+            String::new()
+        } else {
+            let d: Vec<String> = dots.iter().map(|d| d.to_string()).collect();
+            format!("  (hatch dot {})", d.join(", "))
+        };
+        let tag = if layers { format!("{c} ") } else { String::new() };
+        println!("    {tag}{n:>4}× {}{dots}", name(k));
+    }
+    if !s.hints.is_empty() {
+        println!("  hatch dots (positions that take a hatch instead of the casing):");
+        for (dot, hatches) in &s.hints {
+            let n = s.blocks.iter().filter(|b| b.dot == *dot).count();
+            println!("    {dot}: {n} position{}: {}", if n == 1 { "" } else { "s" }, strip_mc_fmt(hatches));
+        }
+    }
+    if layers {
+        let mut grid = vec![vec![vec!['.'; sx as usize]; sz as usize]; sy as usize];
+        for b in &s.blocks {
+            grid[b.y as usize][b.z as usize][b.x as usize] = symbol[key(b).as_str()];
+        }
+        for (y, layer) in grid.iter().enumerate() {
+            println!("  y={y}  (north up, east right)");
+            for row in layer {
+                println!("    {}", row.iter().collect::<String>());
+            }
+        }
+    }
+    Ok(())
+}
+
 // ===== Main =====
 
 fn main() -> Result<()> {
@@ -2022,6 +2123,12 @@ fn main() -> Result<()> {
                     println!("    {line}");
                 }
             }
+            if let Some(tip) = &item.shift_tooltip {
+                println!("  tooltip (Shift):");
+                for line in strip_mc_fmt(tip).lines() {
+                    println!("    {line}");
+                }
+            }
             if let Some(c) = &item.container {
                 let fname = c
                     .fluid_id
@@ -2029,6 +2136,38 @@ fn main() -> Result<()> {
                     .map(|fid| repo.name_of(fid).unwrap_or_else(|_| fid.to_string()))
                     .unwrap_or_else(|| "?".to_string());
                 println!("  container of:  {}  ({}mB)", fname, c.amount);
+            }
+        }
+
+        Command::Structure { id, tier, layers } => {
+            let db_id = to_db_id(id);
+            match repo.structure(&db_id, *tier)? {
+                Some(s) => print_structure(&repo, &s, *layers, cli.json)?,
+                None if tier.is_some() && repo.structure(&db_id, None)?.is_some() => {
+                    anyhow::bail!("{id} has no tier {}", tier.unwrap_or_default());
+                }
+                None => {
+                    let users = repo.structures_using(&db_id)?;
+                    if users.is_empty() {
+                        anyhow::bail!("{id} is not a multiblock controller or part of any multiblock");
+                    }
+                    if cli.json {
+                        let v: Vec<_> = users
+                            .iter()
+                            .map(|(c, t, n)| {
+                                serde_json::json!({"controller": from_db_id(c), "name": repo.name_of(c).ok(),
+                                                   "tier": t, "count": n})
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                        return Ok(());
+                    }
+                    println!("{} is part of {} multiblocks (count at the lowest tier using it):", repo.name_of(&db_id)?, users.len());
+                    for (c, t, n) in &users {
+                        let tier = if *t > 1 { format!("  (from tier {t})") } else { String::new() };
+                        println!("  {n:>4}× in {}  [{}]{tier}", repo.name_of(c)?, from_db_id(c));
+                    }
+                }
             }
         }
 

@@ -19,9 +19,10 @@ Rebuild after editing source: `cargo build --release && \cp -u target/release/gt
 | Command | Description |
 |---------|-------------|
 | `build-db [script] [-o path]` | *(Legacy)* Convert `nesql-db.script` → `nesql.db` |
-| `merge-db <src>` | Merge another NESQL export into `--data` (e.g. a `/nesqlcrops` repository); only rows the DB lacks are added |
+| `merge-db <src>` | Merge another NESQL export into `--data` (e.g. a `/nesqlcrops` or `/nesqlmultiblocks` repository); only rows the DB lacks are added, and collection rows (tooltip lines, structure blocks) only for entities the DB has none for |
 | `search <query>` | Substring search items+fluids by name/id. Flags: `--tooltip`/`-t`, `--regex`/`-r`, `--limit N` |
-| `item <id>` / `fluid <id>` | Details for one item or fluid |
+| `item <id>` / `fluid <id>` | Details for one item or fluid; items show their Shift tooltip too when it differs (GT multiblock structure text) |
+| `structure <id> [--tier N] [--layers]` | A multiblock's structure as NEI's "Multiblock Structure" tab builds it (block counts, hatch dots, `--layers` y-slices); for a non-controller id, the multiblocks that use that block |
 | `recipe-types [--filter <str>]` | List recipe type names with counts |
 | `recipes-for <id>` | Recipes that produce the item/fluid |
 | `recipes-using <id>` | Recipes that consume the item/fluid/ore-dict |
@@ -138,6 +139,8 @@ For recipes with `coil_heat ≤ 3601` the coil is never the bottleneck (Nichrome
 GTNH 2.9.0: 122,285 items · 1,475 fluids · 142,291 ore dicts · 2,587 recipe types · 252,490 recipes · 122 ore veins · 54 small ores · 48 underground fluid entries · 543 bee mutations · 402 mob entries · 3,814 quests. (The 2.8 export is kept as `nesql-2.8.db`; use `--data nesql-2.8.db`.)
 
 Gaps: IC2 Nuclear Fission EU/t not stored. Planetary Gas Siphon and Bee Products are included. CropsNH crop drops are not in the 2.9.0 export until a `/nesqlcrops` export is merged in (see Recipe Output Format); then `crop` (one row per crop, `recipe_id` joins its `Crops` recipe: `crop_id`, `localized_name`, `tier`, `growth_duration`, `drop_chance`) with `crop_liked_biome_tags` and `crop_requirements` (ordered text rows keyed by `crop.id`).
+
+Multiblock structures (`/nesqlmultiblocks`, merged in; 334 GT multiblocks, 1,643 tier rows): `multiblock_structure` (one row per controller × tier slider value: `controller_id`, `tier`, `max_tier`, `sizex/y/z`, `controllerx/y/z`; controller faces south, +z) with `multiblock_structure_blocks` (`blocks_x/y/z` from the lowest corner, `blocks_item_id` = the block's item, `blocks_block` + `blocks_block_meta` = registry name and meta, `blocks_dot` = hatch hint dot, 0 for none), `multiblock_structure_hints` (`hints_key` dot → accepted hatches) and `multiblock_structure_description` (structure tooltip lines). Built with every channel slider unset and one of each required hatch placed on a dot position; the rest of the dot positions hold the casing. Shift tooltips: `item_shift_tooltip` (ordered rows, only where they differ from `item_tooltip`).
 
 Files: `src/lib.rs` (structs, queries), `src/main.rs` (CLI, formatting), `nesql.db` (SQLite). Item tooltips are read from `item.tooltip` (exports before NESQL-Exporter 0.5.7) or joined from `item_tooltip` rows (0.5.7+); `Repository::open` picks whichever the DB has.
 

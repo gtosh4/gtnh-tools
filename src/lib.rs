@@ -23,6 +23,8 @@ pub struct Item {
     pub mod_name: Option<String>,
     pub internal_name: Option<String>,
     pub tooltip: Option<String>,
+    /// Tooltip with Shift held, when it differs (NESQL-Exporter `item_shift_tooltip`).
+    pub shift_tooltip: Option<String>,
     pub unlocalized_name: Option<String>,
     pub nbt: Option<String>,
     pub stack_size: i32,
@@ -219,6 +221,37 @@ pub struct CropInfo {
     pub requirements: Vec<String>,
 }
 
+/// A GT multiblock as the NEI "Multiblock Structure" tab builds it at one tier (NESQL-Exporter
+/// `multiblock` plugin): tier slider set, channel sliders unset, one of each required hatch placed.
+/// The controller faces south (+z); coordinates run from the structure's lowest corner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiblockStructure {
+    pub controller_id: String,
+    pub tier: i32,
+    pub max_tier: i32,
+    /// x (east), y (up), z (south).
+    pub size: [i32; 3],
+    pub controller: [i32; 3],
+    pub blocks: Vec<StructureBlock>,
+    /// Hatch hint dot → the hatches it accepts.
+    pub hints: Vec<(i32, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureBlock {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    /// The block's item (its drop): casing, coil, glass, or the specific hatch/controller.
+    pub item_id: Option<String>,
+    /// Block registry name and meta, as a schematic would place it.
+    pub block: String,
+    pub meta: i32,
+    /// Hatch hint dot; 0 if no hatch may go here. Dot positions hold a casing unless the
+    /// preview put one of the required hatches there.
+    pub dot: i32,
+}
+
 /// Recipe type of the CropsNH crop pages (seed + soils → drops).
 pub const CROPS_RECIPE_TYPE: &str = "Crops";
 /// Input slot of a `Crops` recipe holding the sub-soil blocks (0 = seed, 1 = soils).
@@ -255,6 +288,8 @@ const LOOKUP_INDEXES: &[(&str, &str, &str)] = &[
     ("idx_rfg_recipe", "recipe_fluid_group", "recipe_id"),
     ("idx_od_group", "ore_dictionary", "item_group_id"),
     ("idx_crop_recipe", "crop", "recipe_id"),
+    ("idx_mbs_controller", "multiblock_structure", "controller_id"),
+    ("idx_mbs_block_item", "multiblock_structure_blocks", "blocks_item_id"),
 ];
 
 fn create_lookup_indexes(conn: &Connection) -> Result<usize> {
@@ -288,6 +323,10 @@ pub struct Repository {
     tooltip_expr: &'static str,
     /// The export carries CropsNH crop data (`crop` table).
     has_crops: bool,
+    /// The export carries Shift tooltips (`item_shift_tooltip`).
+    has_shift_tooltips: bool,
+    /// The export carries multiblock structures (`multiblock_structure`).
+    has_structures: bool,
     /// Keyed by output goods_id. Populated lazily in bulk on first access.
     producing_cache: RefCell<HashMap<String, Vec<Recipe>>>,
     producing_cache_loaded: RefCell<bool>,
@@ -332,15 +371,22 @@ impl Repository {
             "COALESCE((SELECT group_concat(t.tooltip, char(10) ORDER BY t.tooltip_order)
                        FROM item_tooltip t WHERE t.item_id = item.id), '')"
         };
-        let has_crops: bool = conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'crop')",
-            [],
-            |r| r.get(0),
-        )?;
+        let has_table = |name: &str| -> rusqlite::Result<bool> {
+            conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                params![name],
+                |r| r.get(0),
+            )
+        };
+        let has_crops = has_table("crop")?;
+        let has_shift_tooltips = has_table("item_shift_tooltip")?;
+        let has_structures = has_table("multiblock_structure")?;
         Ok(Repository {
             conn,
             tooltip_expr,
             has_crops,
+            has_shift_tooltips,
+            has_structures,
             producing_cache: RefCell::new(HashMap::new()),
             producing_cache_loaded: RefCell::new(false),
             od_cache: RefCell::new(HashMap::new()),
@@ -391,6 +437,95 @@ impl Repository {
             liked_biome_tags: lines("crop_liked_biome_tags", "liked_biome_tags")?,
             requirements: lines("crop_requirements", "requirements")?,
         }))
+    }
+
+    /// Structure of the multiblock `controller_id` at `tier` (`None`: lowest tier), or `None` if
+    /// it isn't a multiblock controller or the export has no structures.
+    pub fn structure(&self, controller_id: &str, tier: Option<i32>) -> Result<Option<MultiblockStructure>> {
+        if !self.has_structures {
+            return Ok(None);
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, tier, max_tier, sizex, sizey, sizez, controllerx, controllery, controllerz
+                 FROM multiblock_structure WHERE controller_id = ?1 AND (?2 IS NULL OR tier = ?2)
+                 ORDER BY tier LIMIT 1",
+                params![controller_id, tier],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i32>(1)?,
+                        r.get::<_, i32>(2)?,
+                        [r.get(3)?, r.get(4)?, r.get(5)?],
+                        [r.get(6)?, r.get(7)?, r.get(8)?],
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((id, tier, max_tier, size, controller)) = row else {
+            return Ok(None);
+        };
+        let blocks = self
+            .conn
+            .prepare(
+                "SELECT blocks_x, blocks_y, blocks_z, blocks_item_id, blocks_block, blocks_block_meta, blocks_dot
+                 FROM multiblock_structure_blocks WHERE multiblock_structure_id = ? ORDER BY blocks_order",
+            )?
+            .query_map(params![id], |r| {
+                Ok(StructureBlock {
+                    x: r.get(0)?,
+                    y: r.get(1)?,
+                    z: r.get(2)?,
+                    item_id: r.get(3)?,
+                    block: r.get(4)?,
+                    meta: r.get(5)?,
+                    dot: r.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let hints = self
+            .conn
+            .prepare(
+                "SELECT hints_key, hints FROM multiblock_structure_hints
+                 WHERE multiblock_structure_id = ? ORDER BY hints_key",
+            )?
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(Some(MultiblockStructure {
+            controller_id: controller_id.to_string(),
+            tier,
+            max_tier,
+            size,
+            controller,
+            blocks,
+            hints,
+        }))
+    }
+
+    /// Multiblocks whose structure uses `item_id`, as (controller id, lowest tier using it, count
+    /// at that tier), by controller name.
+    pub fn structures_using(&self, item_id: &str) -> Result<Vec<(String, i32, i64)>> {
+        if !self.has_structures {
+            return Ok(Vec::new());
+        }
+        let rows = self
+            .conn
+            .prepare(
+                "WITH uses AS (
+                     SELECT s.controller_id, s.tier, count(*) AS n
+                     FROM multiblock_structure_blocks b
+                     JOIN multiblock_structure s ON s.id = b.multiblock_structure_id
+                     WHERE b.blocks_item_id = ?1 AND s.controller_id != ?1
+                     GROUP BY s.id)
+                 SELECT u.controller_id, u.tier, u.n FROM uses u
+                 JOIN item i ON i.id = u.controller_id
+                 WHERE u.tier = (SELECT min(tier) FROM uses v WHERE v.controller_id = u.controller_id)
+                 ORDER BY i.localized_name",
+            )?
+            .query_map(params![item_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
     }
 
     // --- Private helpers ---
@@ -867,6 +1002,7 @@ impl Repository {
                         mod_name: nonempty(r.get(2)?),
                         internal_name: nonempty(r.get(3)?),
                         tooltip: nonempty(r.get(4)?),
+                        shift_tooltip: None,
                         unlocalized_name: nonempty(r.get(5)?),
                         nbt: nonempty(r.get(6)?),
                         stack_size: r.get(7)?,
@@ -878,6 +1014,14 @@ impl Repository {
             .optional()?;
 
         let Some(mut item) = row else { return Ok(None) };
+        if self.has_shift_tooltips {
+            item.shift_tooltip = nonempty(self.conn.query_row(
+                "SELECT COALESCE(group_concat(shift_tooltip, char(10) ORDER BY shift_tooltip_order), '')
+                 FROM item_shift_tooltip WHERE item_id = ?",
+                params![id],
+                |r| r.get(0),
+            )?);
+        }
         item.container = self
             .conn
             .query_row(
@@ -1002,6 +1146,7 @@ impl Repository {
                 mod_name: nonempty(r.get(2)?),
                 internal_name: nonempty(r.get(3)?),
                 tooltip: nonempty(r.get(4)?),
+                shift_tooltip: None,
                 unlocalized_name: nonempty(r.get(5)?),
                 nbt: nonempty(r.get(6)?),
                 stack_size: r.get(7)?,
@@ -1956,10 +2101,12 @@ fn nonempty(s: String) -> Option<String> {
 
 /// Copy into `dst` every row of `src` (another NESQL export of the same game, e.g. a
 /// `/nesqlcrops` repository) that `dst` lacks, creating the tables only `src` has. NESQL keys
-/// rows by content hashes, so a row both hold is identical: tables with a primary key take
-/// `INSERT OR IGNORE`, the rest (collection tables) only the rows `dst` doesn't already have.
-/// `src`'s export `metadata` row is skipped; its plugin names join `dst`'s. Returns the rows
-/// added per table, for tables that gained any.
+/// entities by content hashes, so an entity both hold is the same one: tables with a primary key
+/// take `INSERT OR IGNORE`, the rest only the rows `dst` doesn't already have. A collection table
+/// (`item_tooltip`, `multiblock_structure_blocks`, ...: no `id` column, rows keyed by their owner's
+/// `<owner>_id`) only takes rows of owners `dst` has none for, so a re-exported entity's rows (a
+/// tooltip one line longer) never splice into `dst`'s. `src`'s export `metadata` row is skipped;
+/// its plugin names join `dst`'s. Returns the rows added per table, for tables that gained any.
 pub fn merge_db(dst: &str, src: &str) -> Result<Vec<(String, usize)>> {
     let mut conn = Connection::open(dst)?;
     conn.execute("ATTACH DATABASE ?1 AS src", params![src])?;
@@ -1971,6 +2118,7 @@ pub fn merge_db(dst: &str, src: &str) -> Result<Vec<(String, usize)>> {
         )?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
+    let names: HashSet<String> = tables.iter().map(|(n, _)| n.clone()).collect();
 
     let tx = conn.transaction()?;
     let mut added = Vec::new();
@@ -1999,12 +2147,29 @@ pub fn merge_db(dst: &str, src: &str) -> Result<Vec<(String, usize)>> {
             .collect();
         let cols = cols.join(", ");
         let has_pk = dst_cols.iter().any(|(_, pk)| *pk);
+        // Owner: the longest other table `P` with `table` = `P_…` and a `P_id` column.
+        let owner_col = if dst_cols.iter().any(|(c, _)| c == "id") {
+            None
+        } else {
+            names
+                .iter()
+                .filter(|p| table.starts_with(&format!("{p}_")))
+                .map(|p| format!("{p}_id"))
+                .filter(|c| dst_cols.iter().any(|(d, _)| d == c) && src_cols.contains(c))
+                .max_by_key(|c| c.len())
+        };
+        let keep = match &owner_col {
+            Some(c) => format!(
+                " WHERE NOT EXISTS (SELECT 1 FROM main.\"{table}\" m WHERE m.\"{c}\" = src.\"{table}\".\"{c}\")"
+            ),
+            None => String::new(),
+        };
         let sql = if has_pk {
-            format!("INSERT OR IGNORE INTO main.\"{table}\" ({cols}) SELECT {cols} FROM src.\"{table}\"")
+            format!("INSERT OR IGNORE INTO main.\"{table}\" ({cols}) SELECT {cols} FROM src.\"{table}\"{keep}")
         } else {
             format!(
                 "INSERT INTO main.\"{table}\" ({cols})
-                 SELECT {cols} FROM src.\"{table}\" EXCEPT SELECT {cols} FROM main.\"{table}\""
+                 SELECT {cols} FROM src.\"{table}\"{keep} EXCEPT SELECT {cols} FROM main.\"{table}\""
             )
         };
         let n = tx.execute(&sql, [])?;
